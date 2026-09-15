@@ -10,19 +10,28 @@ import Card from '@/components/ui/card/Card.vue'
 import CardHeader from '@/components/ui/card/CardHeader.vue'
 import CardContent from '@/components/ui/card/CardContent.vue'
 import { isDark } from '@/composables/useTheme'
+import { useRequest } from '@/composables/useApi'
+import { getAssetDistribution, getAssetSummary } from '@/api'
 import { MONO_FONT, SANS_FONT, themeColor } from '@/lib/chart-theme'
-import {
-  distributionData,
-  distributionDimLabel,
-  formatCNY,
-  formatWan,
-  totalAssets,
-  type DistributionDim,
-} from '@/lib/data'
+import { formatCNY, formatWan } from '@/lib/finance'
+import type { DistributionDim } from '@/api/types'
 
 use([CanvasRenderer, BarChart, GridComponent, TooltipComponent])
 
 const dims: DistributionDim[] = ['industry', 'region', 'currency']
+
+const distributionDimLabel: Record<DistributionDim, string> = {
+  industry: '行业',
+  region: '区域',
+  currency: '币种',
+}
+
+const { data: summary } = useRequest(() => getAssetSummary())
+const { data: distributionData } = useRequest(() => getAssetDistribution())
+
+/** 总资产（用于 tooltip 占比计算） */
+const totalAssets = computed(() => summary.value?.totalAssets ?? 0)
+
 const dimIndex = ref(0)
 const dim = computed(() => dims[dimIndex.value])
 
@@ -59,7 +68,7 @@ watch(isDark, async () => {
 
 /** 当前维度数据，按 value 降序排列 */
 const sortedData = computed(() =>
-  [...distributionData[dim.value]]
+  [...(distributionData.value?.[dim.value] ?? [])]
     .filter((d) => d.value > 0)
     .sort((a, b) => b.value - a.value),
 )
@@ -94,7 +103,7 @@ const option = computed<EChartsOption>(() => {
           name: string
           value: number
         }
-        const pct = ((p.value / totalAssets) * 100).toFixed(1)
+        const pct = totalAssets.value === 0 ? '0.0' : ((p.value / totalAssets.value) * 100).toFixed(1)
         return `<div style="min-width:140px">
           <div style="font-weight:600;font-size:13px;color:${foreground}">${p.name}</div>
           <div style="margin-top:6px;display:flex;justify-content:space-between;gap:20px">

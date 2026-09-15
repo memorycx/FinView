@@ -4,7 +4,8 @@ import Card from '@/components/ui/card/Card.vue'
 import CardHeader from '@/components/ui/card/CardHeader.vue'
 import CardContent from '@/components/ui/card/CardContent.vue'
 import Badge from '@/components/ui/Badge.vue'
-import { formatCNY, type Fund, type PlanAdjustment } from '@/lib/data'
+import { formatCNY, frequencyLabel } from '@/lib/finance'
+import type { Fund, PlanAdjustment } from '@/api/types'
 
 const props = defineProps<{
   /** 当前选中的基金；为 null 时汇总 funds 范围内全部调整记录 */
@@ -50,7 +51,7 @@ const entries = computed<TimelineEntry[]>(() => {
             class="absolute -left-[6.5px] mt-1.5 size-3.5 rounded-full border-2 border-background"
             :style="{
               backgroundColor:
-                adj.monthlyAmount === null ? 'var(--loss)' : 'var(--brand)',
+                adj.amount === null ? 'var(--loss)' : 'var(--brand)',
             }"
             aria-hidden
           />
@@ -67,11 +68,11 @@ const entries = computed<TimelineEntry[]>(() => {
           </p>
           <p class="mt-1 text-sm leading-relaxed text-muted-foreground">{{ adj.reason }}</p>
           <div class="mt-2">
-            <Badge v-if="adj.monthlyAmount === null" variant="secondary">
+            <Badge v-if="adj.amount === null" variant="secondary">
               停止定投
             </Badge>
             <Badge v-else variant="outline" class="font-mono font-normal">
-              月投 {{ formatCNY(adj.monthlyAmount) }}
+              {{ frequencyLabel(adj.frequency!) }} {{ formatCNY(adj.amount) }}
             </Badge>
           </div>
         </li>

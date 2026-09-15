@@ -11,17 +11,21 @@ import Card from '@/components/ui/card/Card.vue'
 import CardHeader from '@/components/ui/card/CardHeader.vue'
 import CardContent from '@/components/ui/card/CardContent.vue'
 import { isDark } from '@/composables/useTheme'
+import { useRequest } from '@/composables/useApi'
+import { getAssetSummary, getFunds } from '@/api'
 import { MONO_FONT, SANS_FONT, themeColor } from '@/lib/chart-theme'
-import {
-  activeFunds,
-  allocation,
-  formatCNY,
-  formatWan,
-  totalAssets,
-  type AssetCategory,
-} from '@/lib/data'
+import { formatCNY, formatWan } from '@/lib/finance'
+import type { AssetCategory } from '@/api/types'
 
 use([CanvasRenderer, EChartsPieChart, TooltipComponent, TitleComponent])
+
+const { data: summary } = useRequest(() => getAssetSummary())
+const { data: activeFunds } = useRequest(() => getFunds({ status: 'active' }))
+
+/** 按资产大类的市值配置 */
+const allocation = computed(() => summary.value?.allocation ?? [])
+/** 总资产（元） */
+const totalAssets = computed(() => summary.value?.totalAssets ?? 0)
 
 const palette: Record<AssetCategory, string> = {
   fund: '--chart-1',
@@ -37,7 +41,7 @@ watch(isDark, async () => {
 })
 
 const data = computed(() =>
-  allocation.map((a) => ({
+  allocation.value.map((a) => ({
     ...a,
     colorVar: palette[a.category],
   })),
@@ -48,7 +52,7 @@ const option = computed<EChartsOption>(() => {
 
   return {
     title: {
-      text: formatWan(totalAssets),
+      text: formatWan(totalAssets.value),
       subtext: '总资产',
       left: 'center',
       top: 'center',
@@ -100,29 +104,36 @@ const option = computed<EChartsOption>(() => {
 })
 
 function pctOf(value: number) {
-  return ((value / totalAssets) * 100).toFixed(1)
+  return totalAssets.value === 0 ? '0.0' : ((value / totalAssets.value) * 100).toFixed(1)
 }
 
 // 风险集中度：按个体持仓（含现金储备）降序排列
-const holdings = computed(() =>
-  [...activeFunds.map((f) => f.current), 128000].sort((a, b) => b - a),
-)
+const holdings = computed(() => {
+  const cash = allocation.value.find((a) => a.category === 'cash')?.value ?? 0
+  return [...(activeFunds.value ?? []).map((f) => f.current), cash].sort((a, b) => b - a)
+})
 
 /** 最大单一资产占比 */
 const maxShare = computed(() =>
-  ((Math.max(...holdings.value) / totalAssets) * 100).toFixed(1),
+  totalAssets.value === 0
+    ? '0.0'
+    : ((Math.max(...holdings.value) / totalAssets.value) * 100).toFixed(1),
 )
 
 /** 前 3 大资产占比 */
 const top3Share = computed(() =>
-  ((holdings.value.slice(0, 3).reduce((s, v) => s + v, 0) / totalAssets) * 100).toFixed(1),
+  totalAssets.value === 0
+    ? '0.0'
+    : ((holdings.value.slice(0, 3).reduce((s, v) => s + v, 0) / totalAssets.value) * 100).toFixed(1),
 )
 
 /** 风险集中度（HHI 归一化：0=极度分散，100=高度集中） */
 const riskConcentration = computed(() => {
+  if (totalAssets.value === 0) return 0
   const n = holdings.value.length
+  if (n === 0) return 0
   const hhi = holdings.value.reduce(
-    (s, v) => s + (v / totalAssets) ** 2,
+    (s, v) => s + (v / totalAssets.value) ** 2,
     0,
   )
   const normalized = (hhi - 1 / n) / (1 - 1 / n)

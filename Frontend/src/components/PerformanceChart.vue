@@ -23,7 +23,8 @@ import {
 import Card from '@/components/ui/card/Card.vue'
 import { isDark } from '@/composables/useTheme'
 import { MONO_FONT, SANS_FONT, themeColor } from '@/lib/chart-theme'
-import { formatCNY, formatPct, formatWan, type YearPoint } from '@/lib/data'
+import { formatCNY, formatPct, formatWan } from '@/lib/finance'
+import type { DayPoint } from '@/api/types'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, MarkLineComponent])
 
@@ -31,7 +32,7 @@ type Mode = 'value' | 'profit'
 type Range = '1' | '3' | '5' | 'all'
 
 const props = defineProps<{
-  series: YearPoint[]
+  series: DayPoint[]
   title: string
   subtitle: string
   /** 开始时间 YYYY-MM，用于投资时长/年化收益计算 */
@@ -102,20 +103,22 @@ const positive = computed(() => totalProfit.value >= 0)
 /** 时间范围过滤后的图表数据 */
 const chartSeries = computed(() => {
   if (range.value === 'all') return props.series
-  const minYear = last.value.year - Number(range.value)
-  return props.series.filter((p) => p.year >= minYear)
+  const [ly, lm] = last.value.day.split('-').map(Number)
+  const minDay = `${ly - Number(range.value)}-${String(lm).padStart(2, '0')}-01`
+  return props.series.filter((p) => p.day >= minDay)
 })
 
 const profitData = computed(() =>
-  chartSeries.value.map((p) => ({ year: p.year, profit: p.total - p.principal })),
+  chartSeries.value.map((p) => ({ day: p.day, profit: p.total - p.principal })),
 )
 
 /** 汇总统计（始终基于完整区间） */
 const stats = computed(() => {
-  const sd = props.startDate ?? `${props.series[0].year}-01`
-  const [sy, sm] = sd.split('-').map(Number)
-  const ey = last.value.year
-  const months = (ey - sy) * 12 + (1 - sm)
+  const startRaw = props.startDate ?? props.series[0].day
+  const startDay = startRaw.length === 7 ? `${startRaw}-01` : startRaw
+  const [sy, sm] = startDay.split('-').map(Number)
+  const [ey, em] = last.value.day.split('-').map(Number)
+  const months = (ey - sy) * 12 + (em - sm)
   const years = Math.max(0, Math.floor(months / 12))
   const remMonths = Math.max(0, months % 12)
   const cagr =
@@ -123,8 +126,8 @@ const stats = computed(() => {
       ? Math.pow(last.value.total / last.value.principal, 12 / months) - 1
       : 0
   return {
-    startLabel: `${sy}-${String(sm).padStart(2, '0')}-01`,
-    startShort: `${sy}-${String(sm).padStart(2, '0')}`,
+    startLabel: startDay,
+    startShort: startDay.slice(0, 7),
     years,
     remMonths,
     principal: last.value.principal,
@@ -178,7 +181,7 @@ const option = computed<EChartsOption>(() => {
   const colorPrincipal = themeColor('--chart-2')
   const cardColor = themeColor('--card')
 
-  const years = chartSeries.value.map((p) => p.year)
+  const days = chartSeries.value.map((p) => p.day)
   const axisPointer = {
     type: 'line' as const,
     lineStyle: { type: 'dashed' as const, color: gridColor },
@@ -189,7 +192,7 @@ const option = computed<EChartsOption>(() => {
     grid: { left: 2, right: 4, top: 34, bottom: 4, containLabel: true },
     xAxis: {
       type: 'category' as const,
-      data: years,
+      data: days,
       boundaryGap: false,
       axisLine: { show: false },
       axisTick: { show: false },
@@ -199,6 +202,11 @@ const option = computed<EChartsOption>(() => {
         fontSize: 14,
         fontWeight: 500,
         fontFamily: SANS_FONT,
+        // 每个年份只显示一个标签（该年第一个数据点），避免相邻年份文字重叠
+        interval: (index: number, value: string) =>
+          index === 0 || days[index - 1].slice(0, 4) !== value.slice(0, 4),
+        hideOverlap: true,
+        formatter: (value: string) => value.slice(0, 4),
       },
     },
     yAxis: {
@@ -236,14 +244,14 @@ const option = computed<EChartsOption>(() => {
           const arr = (Array.isArray(params) ? params : [params]) as Array<{
             seriesName: string
             value: number
-            axisValue: number
+            axisValue: string
           }>
           const total = arr.find((p) => p.seriesName === 'total')?.value ?? 0
           const principal = arr.find((p) => p.seriesName === 'principal')?.value ?? 0
           const profit = total - principal
           const r = principal === 0 ? 0 : profit / principal
           return `<div style="min-width:200px">
-            <div style="font-weight:700;font-size:14px;color:${foreground};margin-bottom:4px">${arr[0]?.axisValue ?? ''}年</div>
+            <div style="font-weight:700;font-size:14px;color:${foreground};margin-bottom:4px">${(arr[0]?.axisValue ?? '').slice(0, 7)}</div>
             <div style="margin-top:8px"><span style="color:${axisLabelColor}">${tipDot(colorTotal)}</span><span style="color:${axisLabelColor}">总持仓</span></div>
             ${tipRow('', formatCNY(total))}
             <div style="margin-top:8px"><span style="color:${axisLabelColor}">${tipDot(colorPrincipal)}</span><span style="color:${axisLabelColor}">投入本金</span></div>
@@ -258,10 +266,9 @@ const option = computed<EChartsOption>(() => {
         {
           name: 'total',
           type: 'line',
-          smooth: true,
-          symbol: 'circle',
-          symbolSize: 8,
-          showSymbol: true,
+          smooth: false,
+          symbol: 'none',
+          showSymbol: false,
           data: chartSeries.value.map((p) => p.total),
           lineStyle: { width: 3, color: colorTotal },
           itemStyle: { color: colorTotal, borderColor: cardColor, borderWidth: 2 },
@@ -284,10 +291,9 @@ const option = computed<EChartsOption>(() => {
         {
           name: 'principal',
           type: 'line',
-          smooth: true,
-          symbol: 'circle',
-          symbolSize: 8,
-          showSymbol: true,
+          smooth: false,
+          symbol: 'none',
+          showSymbol: false,
           data: chartSeries.value.map((p) => p.principal),
           lineStyle: { width: 2, type: [6, 5], color: colorPrincipal },
           itemStyle: { color: cardColor, borderColor: colorPrincipal, borderWidth: 2 },
@@ -305,13 +311,13 @@ const option = computed<EChartsOption>(() => {
       trigger: 'axis',
       axisPointer,
       formatter: (params: unknown) => {
-        const arr = (Array.isArray(params) ? params : [params]) as Array<{
-          value: number
-          axisValue: number
-        }>
-        const p = arr[0]
-        return `<div style="min-width:180px">
-          <div style="font-weight:700;font-size:14px;color:${foreground};margin-bottom:4px">${p?.axisValue ?? ''}年</div>
+          const arr = (Array.isArray(params) ? params : [params]) as Array<{
+            value: number
+            axisValue: string
+          }>
+          const p = arr[0]
+          return `<div style="min-width:180px">
+          <div style="font-weight:700;font-size:14px;color:${foreground};margin-bottom:4px">${(p?.axisValue ?? '').slice(0, 7)}</div>
           ${tipRow('累计收益', signedCNY(p?.value ?? 0), gainColor)}
         </div>`
       },
@@ -320,10 +326,9 @@ const option = computed<EChartsOption>(() => {
       {
         name: 'profit',
         type: 'line',
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 8,
-        showSymbol: true,
+        smooth: false,
+        symbol: 'none',
+        showSymbol: false,
         data: profitData.value.map((p) => p.profit),
         lineStyle: { width: 3, color: colorTotal },
         itemStyle: { color: colorTotal, borderColor: cardColor, borderWidth: 2 },

@@ -4,18 +4,18 @@ import Card from '@/components/ui/card/Card.vue'
 import CardHeader from '@/components/ui/card/CardHeader.vue'
 import CardContent from '@/components/ui/card/CardContent.vue'
 import Badge from '@/components/ui/Badge.vue'
-import {
-  leaderboard,
-  formatPct,
-  returnRate,
-} from '@/lib/data'
+import { useRequest } from '@/composables/useApi'
+import { getFundLeaderboard } from '@/api'
+import { formatPct, returnRate } from '@/lib/finance'
 
 const emit = defineEmits<{
   select: [id: string, active: boolean]
 }>()
 
+const { data: leaderboard } = useRequest(() => getFundLeaderboard())
+
 const max = computed(() =>
-  Math.max(...leaderboard.map((f) => Math.abs(returnRate(f)))),
+  Math.max(0, ...(leaderboard.value ?? []).map((f) => Math.abs(returnRate(f)))),
 )
 
 function barWidth(rate: number) {

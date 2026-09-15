@@ -8,9 +8,10 @@ import Separator from '@/components/ui/Separator.vue'
 import {
   formatCNY,
   formatPct,
+  frequencyLabel,
   returnRate,
-  type Fund,
-} from '@/lib/data'
+} from '@/lib/finance'
+import type { Fund } from '@/api/types'
 
 defineProps<{
   fund: Fund
@@ -81,11 +82,11 @@ const emit = defineEmits<{
             <p class="mt-1.5 text-sm text-muted-foreground">{{ adj.reason }}</p>
             <div class="mt-2.5 flex items-center gap-2 text-xs">
               <span class="text-muted-foreground">调整后：</span>
-              <Badge v-if="adj.monthlyAmount === null" variant="secondary">
+              <Badge v-if="adj.amount === null" variant="secondary">
                 停止定投
               </Badge>
               <span v-else class="font-mono font-medium">
-                月投 {{ formatCNY(adj.monthlyAmount) }}
+                {{ frequencyLabel(adj.frequency!) }} {{ formatCNY(adj.amount) }}
               </span>
             </div>
             <p v-if="adj.note" class="mt-2 text-xs text-muted-foreground/80">

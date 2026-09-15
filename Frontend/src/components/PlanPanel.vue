@@ -7,17 +7,12 @@ import CardContent from '@/components/ui/card/CardContent.vue'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
 import PlanDetail from '@/components/PlanDetail.vue'
-import {
-  activeFunds,
-  archivedFunds,
-  categoryLabels,
-  formatCNY,
-  formatPct,
-  returnRate,
-  type Fund,
-} from '@/lib/data'
+import { formatCNY, formatPct, frequencyLabel, returnRate } from '@/lib/finance'
+import type { AssetCategory, Fund } from '@/api/types'
 
 const props = defineProps<{
+  /** 全部定投计划（含进行中与已归档），由父级通过 API 加载 */
+  funds: Fund[]
   tab: 'active' | 'archived'
   selectedId: string | null
   view: 'list' | 'detail'
@@ -29,8 +24,15 @@ const emit = defineEmits<{
   viewChange: [view: 'list' | 'detail']
 }>()
 
+const categoryLabels: Record<AssetCategory, string> = {
+  fund: '基金',
+  stock: '股票',
+  bond: '债券',
+  cash: '现金',
+}
+
 const list = computed(() =>
-  props.tab === 'active' ? activeFunds : archivedFunds,
+  props.funds.filter((f) => (props.tab === 'active' ? f.active : !f.active)),
 )
 
 const selected = computed(
@@ -111,7 +113,7 @@ const tabs = [
           </div>
           <p class="mt-1 font-mono text-sm text-muted-foreground">
             {{ fund.code
-            }}{{ fund.active ? ` · 月投 ${formatCNY(fund.monthlyAmount)}` : ' · 已停止' }}
+            }}{{ fund.active ? ` · ${frequencyLabel(fund.frequency)} ${formatCNY(fund.amount)}` : ' · 已停止' }}
           </p>
         </div>
         <div class="text-right">

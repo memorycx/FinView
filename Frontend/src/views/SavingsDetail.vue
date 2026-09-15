@@ -13,16 +13,16 @@ import CardHeader from '@/components/ui/card/CardHeader.vue'
 import CardContent from '@/components/ui/card/CardContent.vue'
 import Button from '@/components/ui/Button.vue'
 import { isDark } from '@/composables/useTheme'
+import { useRequest } from '@/composables/useApi'
+import { getSavingsPlan } from '@/api'
 import { MONO_FONT, SANS_FONT, themeColor } from '@/lib/chart-theme'
 import {
   formatCNY,
   formatPct,
   savingsEstimatedDate,
-  savingsPlans,
   savingsProgress,
   savingsRemaining,
-  type SavingsPlan,
-} from '@/lib/data'
+} from '@/lib/finance'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent])
 
@@ -30,9 +30,13 @@ const route = useRoute()
 const router = useRouter()
 
 const planId = computed(() => String(route.params.id ?? ''))
-const plan = computed<SavingsPlan | null>(
-  () => savingsPlans.find((p) => p.id === planId.value) ?? null,
-)
+
+const { data, loading, reload } = useRequest(() => getSavingsPlan(planId.value))
+
+// 路由参数变化时（如从"新建计划"跳回具体计划）重新加载
+watch(planId, () => reload())
+
+const plan = computed(() => data.value ?? null)
 
 function goBack() {
   router.push({ name: 'savings' })
@@ -133,7 +137,15 @@ function pctOf(amount: number, total: number) {
 </script>
 
 <template>
-  <div v-if="plan" class="mx-auto w-full max-w-[1400px] px-4 pt-6 pb-[18px] sm:px-10 lg:pt-4">
+  <!-- 加载中 -->
+  <div
+    v-if="loading"
+    class="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-sm text-muted-foreground"
+  >
+    数据加载中…
+  </div>
+
+  <div v-else-if="plan" class="mx-auto w-full max-w-[1400px] px-4 pt-6 pb-[18px] sm:px-10 lg:pt-4">
     <!-- 占位：对齐返回按钮区 -->
     <div class="mb-4 shrink-0 lg:mb-3 flex items-center gap-3" aria-hidden="true">
       <div class="h-7 invisible">&nbsp;</div>

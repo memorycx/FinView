@@ -6,10 +6,14 @@ import PerformanceChart from '@/components/PerformanceChart.vue'
 import PlanPanel from '@/components/PlanPanel.vue'
 import PlanTimeline from '@/components/PlanTimeline.vue'
 import Button from '@/components/ui/Button.vue'
-import { activeFunds, archivedFunds, funds, portfolioSeries } from '@/lib/data'
+import { getFunds, getPortfolioSeries } from '@/api'
+import { useRequest } from '@/composables/useApi'
 
 const route = useRoute()
 const router = useRouter()
+
+const { data: funds } = useRequest(() => getFunds({ status: 'all' }))
+const { data: portfolioSeries } = useRequest(() => getPortfolioSeries())
 
 // 支持从「我的资产」排行榜跳转携带 ?fund=xxx&tab=active|archived 预选基金
 const selectedId = ref<string | null>(
@@ -25,11 +29,11 @@ onMounted(() => {
 })
 
 const selectedFund = computed(
-  () => funds.find((f) => f.id === selectedId.value) ?? null,
+  () => funds.value?.find((f) => f.id === selectedId.value) ?? null,
 )
 
 const chartSeries = computed(() =>
-  selectedFund.value ? selectedFund.value.series : portfolioSeries,
+  selectedFund.value ? selectedFund.value.series : portfolioSeries.value ?? [],
 )
 const chartTitle = computed(() =>
   selectedFund.value ? selectedFund.value.name : '投资组合总览',
@@ -42,7 +46,10 @@ const chartSubtitle = computed(() =>
 
 /** 组合起始时间 = 进行中基金里最早的定投日期 */
 const portfolioStart = computed(() =>
-  [...activeFunds].map((f) => f.startDate).sort()[0],
+  [...(funds.value ?? [])]
+    .filter((f) => f.active)
+    .map((f) => f.startDate)
+    .sort()[0],
 )
 const chartStartDate = computed(() =>
   selectedFund.value ? selectedFund.value.startDate : portfolioStart.value,
@@ -50,7 +57,7 @@ const chartStartDate = computed(() =>
 
 /** 时间轴未选中具体计划时，按当前 tab 汇总该范围内全部计划 */
 const timelineFunds = computed(() =>
-  tab.value === 'active' ? activeFunds : archivedFunds,
+  (funds.value ?? []).filter((f) => (tab.value === 'active' ? f.active : !f.active)),
 )
 
 function handleSelect(id: string) {
@@ -87,12 +94,20 @@ function handleTabChange(t: 'active' | 'archived') {
     <div class="ds-flex lg:min-h-0 lg:flex-1">
       <!-- xl 以上双列：左绩效图表（视觉核心）/ 右计划列表+时间轴；中等屏单列堆叠 -->
       <div class="ds-flex grid gap-4 lg:h-full lg:gap-5 xl:grid-cols-[1.7fr_1fr]">
+        <!-- 数据加载完成前用占位块撑住布局，避免图表区跳动 -->
         <PerformanceChart
+          v-if="chartSeries.length > 0"
           :series="chartSeries"
           :title="chartTitle"
           :subtitle="chartSubtitle"
           :start-date="chartStartDate"
         />
+        <div
+          v-else
+          class="flex items-center justify-center rounded-2xl border border-border bg-card text-sm text-muted-foreground"
+        >
+          数据加载中…
+        </div>
         <!-- 右列：顶部加不可见占位标题块，与左侧 PerformanceChart 卡片顶部对齐 -->
         <div class="ds-flex flex h-full min-h-0 flex-col">
           <div
@@ -104,6 +119,7 @@ function handleTabChange(t: 'active' | 'archived') {
           </div>
           <div class="ds-flex flex flex-col gap-4 lg:min-h-0 lg:gap-5 lg:flex-1">
             <PlanPanel
+              :funds="funds ?? []"
               :tab="tab"
               :selected-id="selectedId"
               :view="view"
@@ -111,7 +127,7 @@ function handleTabChange(t: 'active' | 'archived') {
               @select="handleSelect"
               @view-change="view = $event"
             />
-            <PlanTimeline class="lg:shrink-0" :fund="selectedFund" :funds="timelineFunds" />
+            <!-- <PlanTimeline class="lg:shrink-0" :fund="selectedFund" :funds="timelineFunds" /> -->
           </div>
         </div>
       </div>

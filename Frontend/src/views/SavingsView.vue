@@ -14,24 +14,27 @@ import {
 } from '@lucide/vue'
 import Card from '@/components/ui/card/Card.vue'
 import Button from '@/components/ui/Button.vue'
+import { useRequest } from '@/composables/useApi'
+import { getSavingsPlans } from '@/api'
 import {
   formatCNY,
-  savingsPlans,
   savingsProgress,
   savingsRemaining,
-  type SavingsPlan,
-  type SavingsPlanType,
-} from '@/lib/data'
+} from '@/lib/finance'
+import type { SavingsPlanType } from '@/api/types'
 
 const router = useRouter()
+
+const { data: savingsPlans } = useRequest(() => getSavingsPlans())
 
 type TabKey = 'all' | SavingsPlanType
 const activeTab = ref<TabKey>('all')
 
 const tabs = computed<{ key: TabKey; label: string; count: number }[]>(() => {
-  const total = savingsPlans.length
-  const asset = savingsPlans.filter((p) => p.type === 'asset').length
-  const wish = savingsPlans.filter((p) => p.type === 'wish').length
+  const plans = savingsPlans.value ?? []
+  const total = plans.length
+  const asset = plans.filter((p) => p.type === 'asset').length
+  const wish = plans.filter((p) => p.type === 'wish').length
   return [
     { key: 'all', label: '全部', count: total },
     { key: 'asset', label: '总资产', count: asset },
@@ -40,21 +43,25 @@ const tabs = computed<{ key: TabKey; label: string; count: number }[]>(() => {
 })
 
 const filteredPlans = computed(() => {
-  if (activeTab.value === 'all') return savingsPlans
-  return savingsPlans.filter((p) => p.type === activeTab.value)
+  const plans = savingsPlans.value ?? []
+  if (activeTab.value === 'all') return plans
+  return plans.filter((p) => p.type === activeTab.value)
 })
 
 /** KPI 统计 */
 const kpi = computed(() => {
-  const totalPlans = savingsPlans.length
-  const totalSaved = savingsPlans.reduce((s, p) => s + p.currentAmount, 0)
-  const totalTarget = savingsPlans.reduce((s, p) => s + p.targetAmount, 0)
+  const plans = savingsPlans.value ?? []
+  const totalPlans = plans.length
+  const totalSaved = plans.reduce((s, p) => s + p.currentAmount, 0)
+  const totalTarget = plans.reduce((s, p) => s + p.targetAmount, 0)
   const totalRemaining = Math.max(0, totalTarget - totalSaved)
   return { totalPlans, totalSaved, totalTarget, totalRemaining }
 })
 
 /** 总资产计划 */
-const assetPlan = computed(() => savingsPlans.find((p) => p.type === 'asset'))
+const assetPlan = computed(() =>
+  (savingsPlans.value ?? []).find((p) => p.type === 'asset'),
+)
 
 function goDetail(id: string) {
   router.push({ name: 'savings-detail', params: { id } })
