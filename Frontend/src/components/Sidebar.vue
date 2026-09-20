@@ -5,17 +5,21 @@ import {
   ChevronsLeft,
   ChevronsRight,
   LayoutDashboard,
+  LogOut,
   Pencil,
   Repeat,
   Sparkles,
   Target,
   Wallet,
 } from '@lucide/vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { SIDEBAR_RAIL_W, useSidebar } from '@/composables/useSidebar'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
+const router = useRouter()
+const auth = useAuthStore()
 const { collapsed, width, resizing, isDesktop, toggle, setWidth } = useSidebar()
 
 /** 桌面端收起态：仅图标轨 */
@@ -60,6 +64,17 @@ function startResize(e: MouseEvent) {
   document.addEventListener('mousemove', onMove)
   document.addEventListener('mouseup', onUp)
 }
+
+function handleLogout() {
+  auth.logout()
+  router.push('/login')
+}
+
+/** 用户头像文字（昵称首字或用户名首字） */
+const avatarLetter = computed(() => {
+  const name = auth.user.nickname || auth.user.username || 'U'
+  return name.charAt(0).toUpperCase()
+})
 </script>
 
 <template>
@@ -110,8 +125,39 @@ function startResize(e: MouseEvent) {
       </RouterLink>
     </nav>
 
-    <!-- 桌面端底部：收起/展开 + 主题切换 + 注释 -->
+    <!-- 桌面端底部：用户卡片 + 收起/展开 + 主题切换 + 注释 -->
     <div class="hidden px-4 pb-5 lg:block" :class="rail ? 'px-2' : ''">
+      <!-- 用户信息卡片 -->
+      <div
+        class="mb-3 flex items-center gap-3 rounded-xl border border-border px-4 py-3"
+        :class="rail ? 'justify-center px-2' : ''"
+      >
+        <div
+          class="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold"
+          :title="(auth.user.nickname || auth.user.username) ?? undefined"
+        >
+          {{ avatarLetter }}
+        </div>
+        <div v-show="!rail" class="flex-1 min-w-0">
+          <p class="text-sm font-medium truncate">
+            {{ auth.user.nickname || auth.user.username }}
+          </p>
+          <p class="text-xs text-muted-foreground truncate">
+            @{{ auth.user.username }}
+            <span v-if="auth.user.role === 'ADMIN'" class="ml-1 text-primary">· 管理员</span>
+          </p>
+        </div>
+        <button
+          v-show="!rail"
+          type="button"
+          class="shrink-0 p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+          title="退出登录"
+          @click="handleLogout"
+        >
+          <LogOut class="size-4" />
+        </button>
+      </div>
+
       <!-- 收起 / 展开按钮 -->
       <button
         type="button"

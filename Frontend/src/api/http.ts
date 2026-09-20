@@ -41,10 +41,28 @@ function buildQuery(params: RequestConfig['params']): string {
 }
 
 async function realRequest<T>(cfg: RequestConfig): Promise<T> {
+  // 构建 headers，附加 JWT token（如果存在）
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  const token = localStorage.getItem('finview_token')
+  if (token) headers['Authorization'] = `Bearer ${token}`
+
   const response = await fetch(`${BASE_URL}${cfg.url}${buildQuery(cfg.params)}`, {
     method: cfg.method ?? 'GET',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
   })
+
+  // 401 未授权 → 清除登录状态并跳转登录页
+  if (response.status === 401) {
+    localStorage.removeItem('finview_token')
+    localStorage.removeItem('finview_user')
+    // 使用 location 直接跳转（避免循环依赖 router）
+    if (!window.location.pathname.startsWith('/login')) {
+      const redirect = encodeURIComponent(window.location.pathname + window.location.search)
+      window.location.href = `/login?redirect=${redirect}`
+    }
+    throw new ApiError(401, '登录已过期，请重新登录')
+  }
+
   if (!response.ok) {
     throw new ApiError(response.status, `请求失败: ${response.status} ${response.statusText}`)
   }

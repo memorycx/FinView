@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.finview.mapper.FundMapper">
+
+    <resultMap id="fundMap" type="com.finview.entity.Fund">
+        <id column="id" property="id"/>
+        <result column="name" property="name"/>
+        <result column="code" property="code"/>
+        <result column="category" property="category"/>
+        <result column="active" property="active"/>
+        <result column="frequency" property="frequency"/>
+        <result column="amount" property="amount"/>
+        <result column="start_date" property="startDate"/>
+        <result column="principal" property="principal"/>
+        <result column="current" property="current"/>
+    </resultMap>
+
+    <resultMap id="dayPointMap" type="com.finview.entity.DayPoint">
+        <result column="day" property="day"/>
+        <result column="principal" property="principal"/>
+        <result column="total" property="total"/>
+    </resultMap>
+
+    <resultMap id="activeSeriesMap" type="com.finview.entity.FundSeriesPoint">
+        <result column="fund_id" property="fundId"/>
+        <result column="day" property="day"/>
+        <result column="principal" property="principal"/>
+        <result column="total" property="total"/>
+    </resultMap>
+
+    <resultMap id="adjustmentMap" type="com.finview.entity.PlanAdjustment">
+        <id column="adjustment_id" property="id"/>
+        <result column="adjustment_date" property="date"/>
+        <result column="reason" property="reason"/>
+        <result column="action" property="action"/>
+        <result column="frequency" property="frequency"/>
+        <result column="amount" property="amount"/>
+        <result column="note" property="note"/>
+    </resultMap>
+
+    <select id="selectFunds" resultMap="fundMap">
+        SELECT id, name, code, category, active, frequency, amount,
+               start_date, principal, `current`
+        FROM fund
+        <where>
+            <if test="active != null">
+                active = #{active}
+            </if>
+        </where>
+        ORDER BY active DESC, id
+    </select>
+
+    <select id="selectFundById" resultMap="fundMap">
+        SELECT id, name, code, category, active, frequency, amount,
+               start_date, principal, `current`
+        FROM fund
+        WHERE id = #{id}
+    </select>
+
+    <select id="selectSeries" resultMap="dayPointMap">
+        SELECT day, principal, total
+        FROM fund_series
+        WHERE fund_id = #{fundId}
+        ORDER BY day
+    </select>
+
+    <select id="selectAdjustments" resultMap="adjustmentMap">
+        SELECT adjustment_id, adjustment_date, reason, action, frequency, amount, note
+        FROM plan_adjustment
+        WHERE fund_id = #{fundId}
+        ORDER BY adjustment_date, sort_order
+    </select>
+
+    <select id="selectActiveSeries" resultMap="activeSeriesMap">
+        SELECT fs.fund_id, fs.day, fs.principal, fs.total
+        FROM fund_series fs
+        INNER JOIN fund f ON f.id = fs.fund_id
+        WHERE f.active = 1
+        ORDER BY fs.fund_id, fs.day
+    </select>
+
+</mapper>

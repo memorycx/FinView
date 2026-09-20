@@ -1,12 +1,10 @@
 import type { AssetCategory, DistributionData, DistributionDim, DayPoint, Fund } from '../types'
 import { ApiError } from '../error'
+// import { expandDaily } from '../../lib/series'
 import { db } from './db'
 
 /** 未定投的现金/货币基金储备（元） */
 const CASH_RESERVE = 128000
-
-/** 组合走势覆盖的年份区间 */
-const PORTFOLIO_YEARS = [2019, 2020, 2021, 2022, 2023, 2024, 2025] as const
 
 const CATEGORY_LABELS: Record<AssetCategory, string> = {
   fund: '基金',
@@ -40,31 +38,23 @@ function fundLeaderboard(): Fund[] {
 
 /* ==================== 组合总览 ==================== */
 
-/** 在基金 series 中查找不超过目标日期的最新数据点 */
-function pickPointOnOrBefore(series: DayPoint[], targetDay: string): DayPoint | undefined {
-  let pick: DayPoint | undefined
-  for (const p of series) {
-    if (p.day <= targetDay) pick = p
-    else break
-  }
-  return pick
-}
-
-/** 按年份汇总全部进行中持仓的本金与市值（每年取年末数据点） */
-function portfolioSeries() {
-  return PORTFOLIO_YEARS.map((year) => {
-    const day = `${year}-12-01`
-    let principal = 0
-    let total = 0
-    for (const f of activeFunds()) {
-      const point = pickPointOnOrBefore(f.series, day)
-      if (point) {
-        principal += point.principal
-        total += point.total
+/** 按自然日汇总全部进行中持仓的本金与市值（日度精度，未开始的日期不计入） */
+function portfolioSeries(): DayPoint[] {
+  const merged = new Map<string, { principal: number; total: number }>()
+  for (const f of activeFunds()) {
+    for (const p of f.series) {
+      const cur = merged.get(p.day)
+      if (cur) {
+        cur.principal += p.principal
+        cur.total += p.total
+      } else {
+        merged.set(p.day, { principal: p.principal, total: p.total })
       }
     }
-    return { day, principal, total }
-  })
+  }
+  return [...merged.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([day, v]) => ({ day, principal: v.principal, total: v.total }))
 }
 
 /* ==================== 资产分析 ==================== */

@@ -1,0 +1,38 @@
+server:
+  port: 8080
+  servlet:
+    # 前端 Base URL 默认为 /api，统一在此加前缀
+    context-path: /api
+
+spring:
+  application:
+    name: finview-backend
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/finview?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
+    username: root
+    password: cx050416
+  sql:
+    init:
+      # 启动时自动建表（IF NOT EXISTS）并写入种子数据（INSERT IGNORE，可重复执行）
+      mode: always
+      schema-locations: classpath:db/schema.sql
+      data-locations: classpath:db/data.sql
+      encoding: UTF-8
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.finview.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    default-fetch-size: 100
+    default-statement-timeout: 30
+
+# JWT 配置（密钥通过环境变量注入，生产环境务必设置足够长度的 secret）
+jwt:
+  secret: ${JWT_SECRET:finview-default-jwt-secret-key-please-change-in-production-2024-minimum-256-bits-long}
+  expiration-ms: 86400000  # 24 小时
+
+logging:
+  level:
+    com.finview: info

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.finview.mapper.AssetMapper">
+
+    <select id="selectActiveCategorySums"
+            resultType="com.finview.entity.CategorySum">
+        SELECT category, SUM(`current`) AS value
+        FROM fund
+        WHERE active = 1
+        GROUP BY category
+    </select>
+
+    <select id="selectDistribution"
+            resultType="com.finview.entity.DistributionItem">
+        SELECT name, value
+        FROM asset_distribution
+        WHERE dim = #{dim}
+        ORDER BY sort_order
+    </select>
+
+</mapper>

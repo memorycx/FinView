@@ -93,12 +93,29 @@ watch(isDark, async () => {
   themeTick.value++
 })
 
+// watch(
+//   () => props.series,
+//   (newSeries, oldSeries) => {
+//     console.log('props.series changed:', newSeries)
+//     console.log('old series:', oldSeries)
+//     console.log('last:', newSeries[newSeries.length - 1])
+//     console.log('======================================')
+
+//     console.log('chartSeries', chartSeries.value)
+//   },
+//   { immediate: true, deep: true }
+// )
+
 const last = computed(() => props.series[props.series.length - 1])
+
+
 const totalProfit = computed(() => last.value.total - last.value.principal)
 const rate = computed(() =>
   last.value.principal === 0 ? 0 : totalProfit.value / last.value.principal,
 )
 const positive = computed(() => totalProfit.value >= 0)
+
+
 
 /** 时间范围过滤后的图表数据 */
 const chartSeries = computed(() => {
@@ -107,6 +124,8 @@ const chartSeries = computed(() => {
   const minDay = `${ly - Number(range.value)}-${String(lm).padStart(2, '0')}-01`
   return props.series.filter((p) => p.day >= minDay)
 })
+
+
 
 const profitData = computed(() =>
   chartSeries.value.map((p) => ({ day: p.day, profit: p.total - p.principal })),
@@ -181,7 +200,43 @@ const option = computed<EChartsOption>(() => {
   const colorPrincipal = themeColor('--chart-2')
   const cardColor = themeColor('--card')
 
-  const days = chartSeries.value.map((p) => p.day)
+  // 根据时间跨度决定 X 轴标签显示 YYYY-MM / YYYY
+const axisLabels = computed(() => {
+  const dates = chartSeries.value.map((p) => p.day)
+
+  if (dates.length < 2) return dates
+
+  const start = new Date(`${dates[0]}T00:00:00`)
+  const end = new Date(`${dates[dates.length - 1]}T00:00:00`)
+
+  const monthsDiff =
+    (end.getFullYear() - start.getFullYear()) * 12 +
+    (end.getMonth() - start.getMonth()) +  1
+
+  if (monthsDiff < 5) {
+    return dates.map((day, index) => {
+      const currentMonth = day.slice(0, 7)
+      if (index === 0) {
+        return currentMonth
+      }
+      const previousMonth = dates[index - 1].slice(0, 7)
+      return currentMonth !== previousMonth ? currentMonth : ''
+    })
+  }
+
+  return dates.map((day, index) => {
+    const currentYear = day.slice(0, 4)
+
+    if (index === 0) {
+      return currentYear
+    }
+    const previousYear = dates[index - 1].slice(0, 4)
+    return currentYear !== previousYear ? currentYear : ''
+  })
+})
+
+const days = chartSeries.value.map((p) => p.day)
+
   const axisPointer = {
     type: 'line' as const,
     lineStyle: { type: 'dashed' as const, color: gridColor },
@@ -202,11 +257,9 @@ const option = computed<EChartsOption>(() => {
         fontSize: 14,
         fontWeight: 500,
         fontFamily: SANS_FONT,
-        // 每个年份只显示一个标签（该年第一个数据点），避免相邻年份文字重叠
-        interval: (index: number, value: string) =>
-          index === 0 || days[index - 1].slice(0, 4) !== value.slice(0, 4),
+        formatter: (_value: string, index: number) => axisLabels.value[index] ?? '',
+        // 日度数据点密集，交由 ECharts 自动抽稀，标签展示完整 YYYY-MM-DD
         hideOverlap: true,
-        formatter: (value: string) => value.slice(0, 4),
       },
     },
     yAxis: {
@@ -233,6 +286,7 @@ const option = computed<EChartsOption>(() => {
     },
   }
 
+
   if (mode.value === 'value') {
     return {
       ...baseAxis,
@@ -251,7 +305,7 @@ const option = computed<EChartsOption>(() => {
           const profit = total - principal
           const r = principal === 0 ? 0 : profit / principal
           return `<div style="min-width:200px">
-            <div style="font-weight:700;font-size:14px;color:${foreground};margin-bottom:4px">${(arr[0]?.axisValue ?? '').slice(0, 7)}</div>
+            <div style="font-weight:700;font-size:14px;color:${foreground};margin-bottom:4px">${arr[0]?.axisValue ?? ''}</div>
             <div style="margin-top:8px"><span style="color:${axisLabelColor}">${tipDot(colorTotal)}</span><span style="color:${axisLabelColor}">总持仓</span></div>
             ${tipRow('', formatCNY(total))}
             <div style="margin-top:8px"><span style="color:${axisLabelColor}">${tipDot(colorPrincipal)}</span><span style="color:${axisLabelColor}">投入本金</span></div>
@@ -317,7 +371,7 @@ const option = computed<EChartsOption>(() => {
           }>
           const p = arr[0]
           return `<div style="min-width:180px">
-          <div style="font-weight:700;font-size:14px;color:${foreground};margin-bottom:4px">${(p?.axisValue ?? '').slice(0, 7)}</div>
+          <div style="font-weight:700;font-size:14px;color:${foreground};margin-bottom:4px">${p?.axisValue ?? ''}</div>
           ${tipRow('累计收益', signedCNY(p?.value ?? 0), gainColor)}
         </div>`
       },
