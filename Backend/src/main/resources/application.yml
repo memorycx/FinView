@@ -14,7 +14,8 @@ spring:
     password: cx050416
   sql:
     init:
-      # 启动时自动建表（IF NOT EXISTS）并写入种子数据（INSERT IGNORE，可重复执行）
+      # 每次启动都执行 schema.sql（幂等建表 + 迁移）与 data.sql（幂等种子）。
+      # 数据源是 MySQL 而非内嵌库，所以这里必须是 always，写 embedded 等于不执行。
       mode: always
       schema-locations: classpath:db/schema.sql
       data-locations: classpath:db/data.sql

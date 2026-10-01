@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   LogOut,
   Pencil,
-  Repeat,
   Sparkles,
   Target,
   Wallet,
@@ -29,8 +28,7 @@ const navItems: { key: string; label: string; icon: Component; to: string }[] = 
   { key: 'dashboard', label: '投资看板', icon: LayoutDashboard, to: '/' },
   { key: 'assets', label: '我的资产', icon: Wallet, to: '/assets' },
   { key: 'savings', label: '存钱计划', icon: Target, to: '/savings' },
-  { key: 'adjust', label: '修订定投', icon: Repeat, to: '/adjust' },
-  { key: 'manual-entry', label: '手动录入', icon: Pencil, to: '/manual-entry' },
+  { key: 'entry', label: '录入数据', icon: Pencil, to: '/entry' },
   { key: 'ai', label: 'AI 收益解读', icon: Sparkles, to: '/ai' },
 ]
 

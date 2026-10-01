@@ -1,6 +1,5 @@
-import type { AssetCategory, DistributionData, DistributionDim, DayPoint, Fund } from '../types'
+import type { AssetCategory, DistributionData, DistributionDim, PortfolioSeries, Fund, AdjustmentPayload, SavingsPlan } from '../types'
 import { ApiError } from '../error'
-// import { expandDaily } from '../../lib/series'
 import { db } from './db'
 
 /** 未定投的现金/货币基金储备（元） */
@@ -13,15 +12,20 @@ const CATEGORY_LABELS: Record<AssetCategory, string> = {
   cash: '现金',
 }
 
-const activeFunds = () => db.funds.filter((f) => f.active)
+/** 未归档（持有中）：与后端 AssetService / PortfolioService 及 /funds?status=active 的口径一致 */
+const unarchivedFunds = () => db.funds.filter((f) => !f.archived)
 
-const returnRate = (f: Fund) => (f.current - f.principal) / f.principal
+/** 与 lib/finance.returnRate 同口径：累计收益 / 累计投入（mock 数据没清过仓，投入 = 本金 + 手续费） */
+const returnRate = (f: Fund) => {
+  const invested = f.invested ?? f.principal + f.fee
+  return invested === 0 ? 0 : (f.current - f.principal - f.fee) / invested
+}
 
 /* ==================== 定投计划 ==================== */
 
 function listFunds(status?: string): Fund[] {
-  if (status === 'active') return activeFunds()
-  if (status === 'archived') return db.funds.filter((f) => !f.active)
+  if (status === 'active') return unarchivedFunds()
+  if (status === 'archived') return db.funds.filter((f) => f.archived)
   return [...db.funds]
 }
 
@@ -38,23 +42,28 @@ function fundLeaderboard(): Fund[] {
 
 /* ==================== 组合总览 ==================== */
 
-/** 按自然日汇总全部进行中持仓的本金与市值（日度精度，未开始的日期不计入） */
-function portfolioSeries(): DayPoint[] {
-  const merged = new Map<string, { principal: number; total: number }>()
-  for (const f of activeFunds()) {
+/** 按自然日汇总全部持有中（未归档）持仓的本金与市值（日度精度，未开始的日期不计入） */
+function portfolioSeries(): PortfolioSeries {
+  const merged = new Map<string, { principal: number; total: number; fee: number }>()
+  for (const f of unarchivedFunds()) {
     for (const p of f.series) {
       const cur = merged.get(p.day)
       if (cur) {
         cur.principal += p.principal
         cur.total += p.total
+        cur.fee += p.fee
       } else {
-        merged.set(p.day, { principal: p.principal, total: p.total })
+        merged.set(p.day, { principal: p.principal, total: p.total, fee: p.fee })
       }
     }
   }
-  return [...merged.entries()]
-    .sort(([a], [b]) => (a < b ? -1 : 1))
-    .map(([day, v]) => ({ day, principal: v.principal, total: v.total }))
+  return {
+    series: [...merged.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([day, v]) => ({ day, principal: v.principal, total: v.total, fee: v.fee })),
+    // 组合年化由后端 XIRR 算；mock 不实现求解器，写死一个估值即可
+    annualizedRate: 0.0921,
+  }
 }
 
 /* ==================== 资产分析 ==================== */
@@ -62,7 +71,7 @@ function portfolioSeries(): DayPoint[] {
 /** 资产总览：按大类汇总当前市值（含现金储备） */
 function assetSummary() {
   const base: Record<AssetCategory, number> = { fund: 0, stock: 0, bond: 0, cash: 0 }
-  for (const f of activeFunds()) {
+  for (const f of unarchivedFunds()) {
     base[f.category] += f.current
   }
   base.cash += CASH_RESERVE
@@ -116,10 +125,48 @@ function listSavingsPlans() {
   return [...db.savingsPlans]
 }
 
-function requireSavingsPlan(id: string) {
+function requireSavingsPlan(id: string): SavingsPlan {
   const plan = db.savingsPlans.find((p) => p.id === id)
   if (!plan) throw new ApiError(404, `存钱计划不存在: ${id}`)
   return plan
+}
+
+/* ==================== 资产调整记录（录入数据） ==================== */
+
+/** Mock 自增 ID */
+let adjustmentSeq = 0
+
+/** 校验并落库一条调整记录，返回后端视图对象 */
+function createAdjustment(payload: AdjustmentPayload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new ApiError(400, '请求体不能为空')
+  }
+  if (!payload.code?.trim()) throw new ApiError(400, '资产编码不能为空')
+  if (payload.name && payload.name.length > 100) {
+    throw new ApiError(400, '资产名称长度不能超过 100')
+  }
+  if (!payload.date) throw new ApiError(400, '记录日期不能为空')
+  if (![1, 2, 3, 4].includes(payload.action)) {
+    throw new ApiError(400, '动作必须是 1/2/3/4')
+  }
+  if (payload.action === 1 && !payload.frequency) {
+    throw new ApiError(400, '定投开始需指定频率')
+  }
+  if (payload.amount == null || Number(payload.amount) <= 0) {
+    throw new ApiError(400, '金额必须大于 0')
+  }
+  adjustmentSeq += 1
+  return {
+    adjustmentId: adjustmentSeq,
+    userId: 1,
+    code: payload.code.trim(),
+    date: payload.date,
+    reason: payload.reason?.trim() || null,
+    action: payload.action,
+    frequency: payload.frequency ?? null,
+    amount: Number(payload.amount),
+    note: payload.note?.trim() || null,
+  }
 }
 
 /* ==================== 路由表 ==================== */
@@ -129,10 +176,12 @@ export interface MockRouteContext {
   params: Record<string, string>
   /** 查询参数（值为 string，undefined 的参数已被剔除） */
   query: Record<string, string>
+  /** 请求体（POST/PUT/PATCH 时透传，GET 时为 undefined） */
+  body?: unknown
 }
 
 export interface MockRoute {
-  method: 'GET'
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   /** 路由模式，支持 `:id` 形式的路径参数 */
   pattern: string
   handle: (ctx: MockRouteContext) => unknown
@@ -155,4 +204,10 @@ export const mockRoutes: MockRoute[] = [
   // 存钱计划
   { method: 'GET', pattern: '/savings/plans/:id', handle: ({ params }) => requireSavingsPlan(params.id) },
   { method: 'GET', pattern: '/savings/plans', handle: () => listSavingsPlans() },
+  // 录入数据：新建资产调整记录
+  {
+    method: 'POST',
+    pattern: '/adjustments',
+    handle: ({ body }) => createAdjustment(body as AdjustmentPayload),
+  },
 ]

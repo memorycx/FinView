@@ -1,15 +1,14 @@
 package com.finview.entity;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
 /**
- * 系统用户实体（与 user 表映射）。
- * password 使用 @JsonProperty(access = WRITE_ONLY) 确保只接收不输出，
- * 避免任何序列化路径泄露密码哈希。
+ * 用户实体，对应 `user` 表。
+ * 注意：password 存的是 BCrypt 密文，任何情况下都不要直接返回给前端，
+ * 对外统一用 LoginResponse 包装。
  */
 @Data
 @NoArgsConstructor
@@ -17,21 +16,28 @@ public class User {
 
     private Long id;
 
-    private String username;
+    /** 用户名，唯一 */
+    private String userName;
 
-    /** 只允许写入（请求体接收），禁止序列化输出 */
-    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    /** BCrypt 加密后的密码 */
     private String password;
 
-    private String email;
-
+    /** 昵称，注册时可选，缺省用用户名 */
     private String nickname;
 
+    /** 邮箱，注册时可选；表上唯一索引，MySQL 下多个 NULL 不冲突 */
+    private String email;
+
+    /** 角色：user / admin */
     private String role;
 
-    private Boolean enabled;
+    private LocalDateTime createTime;
 
-    private LocalDateTime createdAt;
+    private LocalDateTime updateTime;
 
-    private LocalDateTime updatedAt;
+    /**
+     * asset_series 上次推进到的日期（《表设计.md》里叫 update_series_time）。
+     * SeriesService.advance 拿它当水位：只补「这个时间之后到今天」的新行，当天重复登录直接跳过。
+     */
+    private LocalDateTime updateSeriesTime;
 }

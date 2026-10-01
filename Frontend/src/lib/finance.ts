@@ -2,14 +2,14 @@ import type { InvestFrequency, SavingsPlan } from '@/api/types'
 
 /* ==================== 金额格式化 ==================== */
 
-/** 金额 → ¥12,345 */
+/** 金额 → ¥12,345.67（固定两位小数：本金/市值都是分位精度，不能只显示到元） */
 export function formatCNY(n: number) {
-  return '¥' + n.toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return '¥' + n.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-/** 金额 → 12.3万 */
+/** 金额 → 1.23万（固定两位小数） */
 export function formatWan(n: number) {
-  return (n / 10000).toLocaleString('zh-CN', { maximumFractionDigits: 1 }) + '万'
+  return (n / 10000).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '万'
 }
 
 /** 比率 → +12.3% */
@@ -24,14 +24,25 @@ export function frequencyLabel(freq: InvestFrequency) {
 
 /* ==================== 收益计算 ==================== */
 
-/** 收益率 =（市值 - 本金）/ 本金 */
-export function returnRate(f: { principal: number; current: number }) {
-  return (f.current - f.principal) / f.principal
+/**
+ * 收益率 = 累计收益 / 累计投入。
+ * 累计收益 =（市值 − 本金 − 累计手续费）跨清仓连续（本金是净投入，卖出已冲减）；
+ * 分母用累计投入而不是「本金 + 手续费」——清过仓的基金本金会变成负数，拿它当分母会算出假数字，
+ * 没清过仓时两者恰好相等（见 CLAUDE.md）。
+ */
+export function returnRate(f: {
+  principal: number
+  current: number
+  fee: number
+  invested?: number
+}) {
+  const invested = f.invested ?? f.principal + f.fee
+  return invested === 0 ? 0 : profit(f) / invested
 }
 
-/** 累计收益 = 市值 - 本金 */
-export function profit(f: { principal: number; current: number }) {
-  return f.current - f.principal
+/** 累计收益 = 市值 − 本金 − 累计手续费 */
+export function profit(f: { principal: number; current: number; fee: number }) {
+  return f.current - f.principal - f.fee
 }
 
 /* ==================== 存钱计划计算 ==================== */

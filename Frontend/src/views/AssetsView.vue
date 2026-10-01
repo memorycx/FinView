@@ -6,11 +6,11 @@ import Leaderboard from '@/components/Leaderboard.vue'
 
 const router = useRouter()
 
-/** 点击排行榜基金：跳回投资看板并选中该基金 */
-function handleSelect(id: string, active: boolean) {
+/** 点击排行榜基金：跳回投资看板并选中该基金（已归档的直接落在「归档」tab） */
+function handleSelect(id: string, archived: boolean) {
   router.push({
     path: '/',
-    query: { fund: id, tab: active ? 'active' : 'archived' },
+    query: { fund: id, tab: archived ? 'archived' : 'active' },
   })
 }
 </script>

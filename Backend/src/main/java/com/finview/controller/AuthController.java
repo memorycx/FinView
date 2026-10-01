@@ -15,7 +15,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 认证相关端点：/api/auth/login, /api/auth/register, /api/auth/me
+ * 认证接口。context-path 为 /api，故实际路径是 /api/auth/**。
+ *
+ * POST /auth/login    登录，放行
+ * POST /auth/register 注册，放行
+ * GET  /auth/me       取当前用户资料，需携带 Authorization: Bearer <token>
  */
 @RestController
 @RequestMapping("/auth")
@@ -24,23 +28,23 @@ public class AuthController {
 
     private final AuthService authService;
 
-    /** POST /auth/login  用户登录 */
     @PostMapping("/login")
     public Result<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
         return Result.success(authService.login(request));
     }
 
-    /** POST /auth/register  用户注册 */
     @PostMapping("/register")
     public Result<LoginResponse> register(@Valid @RequestBody RegisterRequest request) {
         return Result.success(authService.register(request));
     }
 
-    /** GET /auth/me  获取当前登录用户信息 */
+    /**
+     * 当前登录用户。
+     * JwtAuthenticationFilter 把 userId 放进了 principal，这里直接取出来用。
+     */
     @GetMapping("/me")
     public Result<LoginResponse> me(Authentication authentication) {
-        // JwtAuthenticationFilter 把 userId 放进了 Authentication.principal
         Long userId = (Long) authentication.getPrincipal();
-        return Result.success(authService.getUserById(userId));
+        return Result.success(authService.currentUser(userId));
     }
 }

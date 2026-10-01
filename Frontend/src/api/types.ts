@@ -4,7 +4,7 @@
 
 /* ==================== 通用 ==================== */
 
-/** 定投计划状态筛选 */
+/** 定投计划列表筛选：active = 未归档（持有中），archived = 已归档 */
 export type FundStatus = 'active' | 'archived' | 'all'
 
 /** 资产分布维度 */
@@ -22,10 +22,25 @@ export type InvestFrequency = 'daily' | 'weekly' | 'monthly'
 export type DayPoint = {
   /** YYYY-MM-DD */
   day: string
-  /** 累计投入本金 */
+  /** 累计投入本金（净投入：卖出已冲减，清过仓的基金可能为负） */
   principal: number
   /** 当前总市值 */
   total: number
+  /** 当日手续费（买入按金额×费率收取，卖出为 0）；累计手续费由前端按日累加 */
+  fee: number
+  /**
+   * 截至当日的累计投入 = Σ 历年买入的（净投入 + 手续费），卖出日不计入 —— 「收益率」的分母。
+   * 后端一定会给；手写的 mock 序列没有它，缺省时按「本金 + 当日累计手续费」兜底（没清过仓时相等）
+   */
+  invested?: number
+}
+
+/** 组合总览（全部持有中持仓）：逐日汇总曲线 + 组合年化收益率 */
+export type PortfolioSeries = {
+  /** 按日期升序的本金/市值走势 */
+  series: DayPoint[]
+  /** 组合 XIRR 年化，小数：0.08 = 8%；null = 持有不足 30 天或无法计算 */
+  annualizedRate: number | null
 }
 
 /** 定投调整记录 */
@@ -51,20 +66,93 @@ export type Fund = {
   category: AssetCategory
   /** 定投是否进行中 */
   active: boolean
+  /** 是否已归档（用户手工标记，与定投是否进行中无关；归档 = 移出「持有中」视图） */
+  archived: boolean
   /** 当前定投频率 */
   frequency: InvestFrequency
   /** 当前每期定投金额 */
   amount: number
   /** 开始时间 YYYY-MM */
   startDate: string
-  /** 累计投入本金 */
+  /** 累计投入本金（不含手续费的净本金） */
   principal: number
   /** 当前市值 */
   current: number
+  /** 累计申购手续费（收益率/收益按「市值 − 本金 − 手续费」算，费算进成本） */
+  fee: number
+  /**
+   * 累计投入 = Σ 历年买入的（净投入 + 手续费），卖出日不计入。
+   * 收益率 =（市值 − 本金 − 手续费）/ 累计投入：清过仓的基金本金会变负，只能用它当分母；
+   * 没清过仓时它恰好等于「本金 + 累计手续费」
+   */
+  invested?: number
+  /**
+   * 后端算的 XIRR 年化收益率，小数：0.08 = 8%。
+   * null = 持有不足 30 天或数学上无解，看板显示「—」。
+   * 与「累计收益率」不是一回事：那个是期末简单收益率，这个按每笔钱在场天数折年
+   */
+  annualizedRate: number | null
   /** 本金/市值走势 */
   series: DayPoint[]
   /** 定投调整记录（按时间正序） */
   adjustments: PlanAdjustment[]
+}
+
+/* ==================== 资产调整记录（录入数据） ==================== */
+
+/**
+ * 资产调整动作：
+ * - 1 定投开始
+ * - 2 结束定投
+ * - 3 一笔收入
+ * - 4 一笔支出
+ */
+export type AdjustmentAction = 1 | 2 | 3 | 4
+
+/** 新建调整记录入参（user_id 由后端从 token 解析，前端不传） */
+export interface AdjustmentPayload {
+  /** 资产编码 */
+  code: string
+  /**
+   * 资产名称，选填。
+   * 不落 adjustments 表，只用来更新 asset.name（自动生成的资产行默认拿 code 当名字）；
+   * 留空则保持资产现有名字不变。
+   */
+  name?: string
+  /** 记录日期 YYYY-MM-DD */
+  date: string
+  /** 变动原因 */
+  reason?: string
+  /** 动作：1定投开始 / 2结束定投 / 3一笔收入 / 4一笔支出 */
+  action: AdjustmentAction
+  /** 定投频率，仅 action=1（定投开始）时需要 */
+  frequency?: InvestFrequency | null
+  /** 金额 */
+  amount: number
+  /** 备注 */
+  note?: string
+}
+
+/** 调整记录（后端返回） */
+export interface Adjustment {
+  /** 调整记录ID */
+  adjustmentId: number
+  /** 用户id */
+  userId: number
+  /** 资产编码 */
+  code: string
+  /** 记录日期 YYYY-MM-DD */
+  date: string
+  /** 变动原因 */
+  reason: string | null
+  /** 动作：1定投开始 / 2结束定投 / 3一笔收入 / 4一笔支出 */
+  action: AdjustmentAction
+  /** 频率 */
+  frequency: string | null
+  /** 金额 */
+  amount: number
+  /** 备注 */
+  note: string | null
 }
 
 /* ==================== 资产分析 ==================== */

@@ -9,7 +9,7 @@ import { getFundLeaderboard } from '@/api'
 import { formatPct, returnRate } from '@/lib/finance'
 
 const emit = defineEmits<{
-  select: [id: string, active: boolean]
+  select: [id: string, archived: boolean]
 }>()
 
 const { data: leaderboard } = useRequest(() => getFundLeaderboard())
@@ -35,7 +35,7 @@ function barWidth(rate: number) {
         :key="f.id"
         type="button"
         class="flex w-full items-center gap-4 rounded-xl px-4 py-3 text-left transition-colors hover:bg-muted/60"
-        @click="emit('select', f.id, f.active)"
+        @click="emit('select', f.id, f.archived)"
       >
         <span class="w-6 shrink-0 font-mono text-base tabular-nums text-muted-foreground">
           {{ i + 1 }}
@@ -44,7 +44,7 @@ function barWidth(rate: number) {
           <div class="flex items-center gap-2">
             <p class="truncate text-base font-semibold">{{ f.name }}</p>
             <Badge
-              v-if="!f.active"
+              v-if="f.archived"
               variant="secondary"
               class="shrink-0 font-normal text-muted-foreground"
             >

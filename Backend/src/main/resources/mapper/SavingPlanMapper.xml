@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.finview.mapper.SavingPlanMapper">
+
+    <!-- start_date 等下划线列名靠 map-underscore-to-camel-case 映射到 startDate -->
+    <sql id="baseColumns">
+        id, user_id, name, description, type, image, target_amount, start_date, target_date,
+        monthly_plan_amount, quote, note, note_image, current_amount
+    </sql>
+
+    <select id="findByUser" resultType="SavingPlan">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM `saving_plans`
+        WHERE user_id = #{userId}
+        ORDER BY id
+    </select>
+
+    <select id="findByIdAndUser" resultType="SavingPlan">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM `saving_plans`
+        WHERE id = #{id}
+          AND user_id = #{userId}
+    </select>
+
+</mapper>

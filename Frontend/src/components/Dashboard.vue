@@ -13,7 +13,7 @@ const route = useRoute()
 const router = useRouter()
 
 const { data: funds } = useRequest(() => getFunds({ status: 'all' }))
-const { data: portfolioSeries } = useRequest(() => getPortfolioSeries())
+const { data: portfolio } = useRequest(() => getPortfolioSeries())
 
 // 支持从「我的资产」排行榜跳转携带 ?fund=xxx&tab=active|archived 预选基金
 const selectedId = ref<string | null>(
@@ -33,7 +33,11 @@ const selectedFund = computed(
 )
 
 const chartSeries = computed(() =>
-  selectedFund.value ? selectedFund.value.series : portfolioSeries.value ?? [],
+  selectedFund.value ? selectedFund.value.series : portfolio.value?.series ?? [],
+)
+/** 年化收益率（XIRR）：选中基金时用它自己的，组合总览时用组合的；null 由组件显示「—」 */
+const chartAnnualizedRate = computed(() =>
+  selectedFund.value ? selectedFund.value.annualizedRate : portfolio.value?.annualizedRate ?? null,
 )
 const chartTitle = computed(() =>
   selectedFund.value ? selectedFund.value.name : '投资组合总览',
@@ -41,13 +45,13 @@ const chartTitle = computed(() =>
 const chartSubtitle = computed(() =>
   selectedFund.value
     ? `${selectedFund.value.code} · 本金与市值走势`
-    : '全部进行中持仓 · 本金与市值走势',
+    : '全部持有中资产 · 本金与市值走势',
 )
 
-/** 组合起始时间 = 进行中基金里最早的定投日期 */
+/** 组合起始时间 = 持有中（未归档）基金里最早的定投日期 */
 const portfolioStart = computed(() =>
   [...(funds.value ?? [])]
-    .filter((f) => f.active)
+    .filter((f) => !f.archived)
     .map((f) => f.startDate)
     .sort()[0],
 )
@@ -57,7 +61,7 @@ const chartStartDate = computed(() =>
 
 /** 时间轴未选中具体计划时，按当前 tab 汇总该范围内全部计划 */
 const timelineFunds = computed(() =>
-  (funds.value ?? []).filter((f) => (tab.value === 'active' ? f.active : !f.active)),
+  (funds.value ?? []).filter((f) => (tab.value === 'active' ? !f.archived : f.archived)),
 )
 
 function handleSelect(id: string) {
@@ -101,6 +105,7 @@ function handleTabChange(t: 'active' | 'archived') {
           :title="chartTitle"
           :subtitle="chartSubtitle"
           :start-date="chartStartDate"
+          :annualized-rate="chartAnnualizedRate"
         />
         <div
           v-else

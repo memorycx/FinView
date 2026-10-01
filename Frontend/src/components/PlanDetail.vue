@@ -85,8 +85,10 @@ const emit = defineEmits<{
               <Badge v-if="adj.amount === null" variant="secondary">
                 停止定投
               </Badge>
+              <!-- 只有定投记录才有频率：买进卖出没有频率，硬套会显示「undefined ¥70」 -->
               <span v-else class="font-mono font-medium">
-                {{ frequencyLabel(adj.frequency!) }} {{ formatCNY(adj.amount) }}
+                <template v-if="adj.frequency">{{ frequencyLabel(adj.frequency) }} </template>
+                {{ formatCNY(adj.amount) }}
               </span>
             </div>
             <p v-if="adj.note" class="mt-2 text-xs text-muted-foreground/80">

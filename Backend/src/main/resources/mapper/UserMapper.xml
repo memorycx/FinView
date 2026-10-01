@@ -1,32 +1,50 @@
-<?xml version="1.0" encoding="UTF-8" ?>
-<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
-        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.finview.mapper.UserMapper">
 
-    <resultMap id="UserResult" type="com.finview.entity.User">
-        <id     property="id"        column="id"/>
-        <result property="username"  column="username"/>
-        <result property="password"  column="password"/>
-        <result property="email"     column="email"/>
-        <result property="nickname"  column="nickname"/>
-        <result property="role"      column="role"/>
-        <result property="enabled"   column="enabled"/>
-        <result property="createdAt" column="created_at"/>
-        <result property="updatedAt" column="updated_at"/>
-    </resultMap>
+    <!-- user 是 MySQL 关键字，统一加反引号 -->
+    <sql id="baseColumns">
+        id, user_name, password, nickname, email, role, create_time, update_time, update_series_time
+    </sql>
 
-    <select id="findByUsername" resultMap="UserResult">
-        SELECT * FROM `user` WHERE username = #{username}
+    <select id="findByUserName" resultType="User">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM `user`
+        WHERE user_name = #{userName}
+        LIMIT 1
     </select>
 
-    <select id="findById" resultMap="UserResult">
-        SELECT * FROM `user` WHERE id = #{id}
+    <select id="findById" resultType="User">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM `user`
+        WHERE id = #{id}
     </select>
 
-    <insert id="insert" parameterType="com.finview.entity.User"
-            useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO `user` (username, password, email, nickname, role, enabled)
-        VALUES (#{username}, #{password}, #{email}, #{nickname}, #{role}, #{enabled})
+    <select id="countByUserName" resultType="int">
+        SELECT COUNT(*)
+        FROM `user`
+        WHERE user_name = #{userName}
+    </select>
+
+    <select id="countByEmail" resultType="int">
+        SELECT COUNT(*)
+        FROM `user`
+        WHERE email = #{email}
+    </select>
+
+    <!-- role 由服务端决定，不接收前端传值；useGeneratedKeys 把自增 id 回填到实体 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `user` (user_name, password, nickname, email, role)
+        VALUES (#{userName}, #{password}, #{nickname}, #{email}, #{role})
     </insert>
+
+    <!-- 序列水位，只由 SeriesService 推进；不动 update_time，避免把用户资料版本搅进业务同步 -->
+    <update id="touchUpdateSeriesTime">
+        UPDATE `user`
+        SET update_series_time = #{updateSeriesTime}
+        WHERE id = #{id}
+    </update>
 
 </mapper>

@@ -1,7 +1,5 @@
 package com.finview.config;
 
-import com.finview.entity.User;
-import com.finview.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,8 +7,6 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
@@ -40,26 +36,6 @@ public class SecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
-    }
-
-    /**
-     * 提供一个最简单的 UserDetailsService，Spring Security 内部部分组件会用到。
-     * 登录认证走我们自己的 AuthService（手动校验密码 + 生成 JWT），
-     * 所以这里只是让 Security 不报错即可。
-     */
-    @Bean
-    public UserDetailsService userDetailsService(UserMapper userMapper) {
-        return username -> {
-            User user = userMapper.findByUsername(username);
-            if (user == null) throw new UsernameNotFoundException("用户不存在: " + username);
-            return new org.springframework.security.core.userdetails.User(
-                    user.getUsername(),
-                    user.getPassword(),
-                    user.getEnabled() != null && user.getEnabled(),
-                    true, true, true,
-                    List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_" + user.getRole()))
-            );
-        };
     }
 
     @Bean

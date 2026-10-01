@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.finview.mapper.NavTrendMapper">
+
+    <sql id="baseColumns">
+        id, `day`, `value`, rate, code
+    </sql>
+
+    <!-- 批量 upsert：靠 UNIQUE KEY idx_day_code (day, code) 命中冲突，外部接口重发同一天净值时覆盖 -->
+    <insert id="upsertBatch">
+        INSERT INTO `nav_trend` (`day`, `value`, rate, code)
+        VALUES
+        <foreach collection="rows" item="row" separator=",">
+            (#{row.day}, #{row.value}, #{row.rate}, #{row.code})
+        </foreach>
+        AS incoming
+        ON DUPLICATE KEY UPDATE
+            `value` = incoming.`value`,
+            rate    = incoming.rate
+    </insert>
+
+    <select id="findByCode" resultType="NavTrend">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM `nav_trend`
+        WHERE code = #{code}
+        ORDER BY `day`
+    </select>
+
+    <select id="findMaxDayByCode" resultType="java.time.LocalDate">
+        SELECT MAX(`day`)
+        FROM `nav_trend`
+        WHERE code = #{code}
+    </select>
+
+</mapper>

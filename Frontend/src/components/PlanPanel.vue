@@ -11,7 +11,7 @@ import { formatCNY, formatPct, frequencyLabel, returnRate } from '@/lib/finance'
 import type { AssetCategory, Fund } from '@/api/types'
 
 const props = defineProps<{
-  /** 全部定投计划（含进行中与已归档），由父级通过 API 加载 */
+  /** 全部定投计划（含持有中与已归档），由父级通过 API 加载 */
   funds: Fund[]
   tab: 'active' | 'archived'
   selectedId: string | null
@@ -31,8 +31,11 @@ const categoryLabels: Record<AssetCategory, string> = {
   cash: '现金',
 }
 
+/** tab 与归档与否一一对应：持有中 = 未归档（含定投已结束的，行内标「已停止」） */
 const list = computed(() =>
-  props.funds.filter((f) => (props.tab === 'active' ? f.active : !f.active)),
+  [...props.funds]
+    .filter((f) => (props.tab === 'active' ? !f.archived : f.archived))
+    .sort((a, b) => Number(b.active) - Number(a.active)),
 )
 
 const selected = computed(
@@ -40,7 +43,7 @@ const selected = computed(
 )
 
 const tabs = [
-  { key: 'active', label: '进行中' },
+  { key: 'active', label: '持有中' },
   { key: 'archived', label: '归档' },
 ] as const
 </script>
@@ -53,7 +56,7 @@ const tabs = [
     @back="emit('viewChange', 'list')"
   />
 
-  <Card v-else class="lg:min-h-0 lg:flex-1">
+  <Card v-else class="lg:min-h-0 lg:flex-1 lg:overflow-hidden">
     <CardHeader class="shrink-0 gap-4">
       <div class="flex items-center justify-between">
         <div class="space-y-1">
@@ -61,7 +64,7 @@ const tabs = [
             定投计划
           </p>
           <h2 class="text-xl font-bold">
-            {{ tab === 'active' ? '进行中的计划' : '已归档计划' }}
+            {{ tab === 'active' ? '持有中的计划' : '已归档计划' }}
           </h2>
         </div>
         <div class="inline-flex rounded-full border border-border p-0.5 text-sm">
@@ -83,7 +86,7 @@ const tabs = [
       </div>
     </CardHeader>
 
-    <CardContent class="space-y-2.5">
+    <CardContent class="space-y-2.5 lg:max-h-full lg:overflow-y-auto lg:pr-2">
       <button
         v-for="fund in list"
         :key="fund.id"
@@ -113,7 +116,7 @@ const tabs = [
           </div>
           <p class="mt-1 font-mono text-sm text-muted-foreground">
             {{ fund.code
-            }}{{ fund.active ? ` · ${frequencyLabel(fund.frequency)} ${formatCNY(fund.amount)}` : ' · 已停止' }}
+            }}{{ fund.active ? ` · ${frequencyLabel(fund.frequency)} ${formatCNY(fund.amount)}` : ' · 持有中' }}
           </p>
         </div>
         <div class="text-right">

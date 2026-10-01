@@ -1,22 +1,54 @@
-<?xml version="1.0" encoding="UTF-8" ?>
-<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
-        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.finview.mapper.AssetMapper">
 
-    <select id="selectActiveCategorySums"
-            resultType="com.finview.entity.CategorySum">
-        SELECT category, SUM(`current`) AS value
-        FROM fund
-        WHERE active = 1
-        GROUP BY category
+    <!-- asset 表的列名本身就是驼峰（startDate），靠同名字段直接映射，不依赖下划线转换 -->
+    <sql id="baseColumns">
+        id, user_id, name, code, category, active, archived, frequency, rate, `startDate`, principal, total,
+        plan_id, industry, region, currency, market
+    </sql>
+
+    <select id="findByUser" resultType="Asset">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM `asset`
+        WHERE user_id = #{userId}
+        ORDER BY code
     </select>
 
-    <select id="selectDistribution"
-            resultType="com.finview.entity.DistributionItem">
-        SELECT name, value
-        FROM asset_distribution
-        WHERE dim = #{dim}
-        ORDER BY sort_order
+    <select id="findByUserAndPlanId" resultType="Asset">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM `asset`
+        WHERE user_id = #{userId}
+          AND plan_id = #{planId}
+        ORDER BY code
     </select>
+
+    <!--
+      快照 upsert：靠 UNIQUE KEY idx_user_code (user_id, code) 命中冲突。
+      冲突时刻意不更新 name / category——它们是用户维护的元数据，
+      被 fold 结果覆盖掉的话，每次录入一条记录资产名就被打回 code。
+      VALUES() 在 MySQL 8.0.20 起标记为废弃，这里用行别名（8.0.19+）写法。
+    -->
+    <!-- 只改名字，不碰快照列：名字是用户维护的，快照是 fold 出来的 -->
+    <update id="updateName">
+        UPDATE `asset`
+        SET name = #{name}
+        WHERE user_id = #{userId}
+          AND code = #{code}
+    </update>
+
+    <insert id="upsertSnapshot">
+        INSERT INTO `asset` (user_id, name, code, category, active, frequency, `startDate`, principal, total)
+        VALUES (#{userId}, #{name}, #{code}, #{category}, #{active}, #{frequency},
+                #{startDate}, #{principal}, #{total}) AS incoming
+        ON DUPLICATE KEY UPDATE
+            active      = incoming.active,
+            frequency   = incoming.frequency,
+            `startDate` = incoming.`startDate`,
+            principal   = incoming.principal,
+            total       = incoming.total
+    </insert>
 
 </mapper>

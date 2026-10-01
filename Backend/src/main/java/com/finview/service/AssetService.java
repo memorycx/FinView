@@ -1,81 +1,141 @@
 package com.finview.service;
 
-import com.finview.common.BusinessException;
-import com.finview.entity.Allocation;
-import com.finview.entity.AssetSummary;
-import com.finview.entity.CategorySum;
-import com.finview.entity.DistributionItem;
+import com.finview.controller.dto.AssetSummaryResponse;
+import com.finview.controller.dto.DistributionItemResponse;
+import com.finview.entity.Asset;
+import com.finview.entity.AssetSeries;
 import com.finview.mapper.AssetMapper;
+import com.finview.mapper.AssetSeriesMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.function.Function;
 
+/**
+ * 资产分析业务：总览（按大类汇总市值）与分布（行业 / 区域 / 币种）。
+ *
+ * 两个接口都只统计**未归档**的资产（asset.archived = 0）：归档是用户手工标记的「移出当前视图」，
+ * 定投结束但没归档的仍算持有、仍计入。前端的 AssetOverview 与 Leaderboard 拿总览里的总资产
+ * 当分母算占比、集中度，口径必须与它自己的持仓列表（/funds?status=active，同样按未归档过滤）一致。
+ *
+ * 市值取 asset_series 每个 code 的最新一行（与走势图同一份数据），
+ * 一行序列都没有时才回退 asset 表的快照列。
+ */
 @Service
 @RequiredArgsConstructor
 public class AssetService {
 
-    /** 未定投的现金/货币基金储备（元），固定追加到 cash 大类 */
-    private static final long CASH_RESERVE = 128_000L;
+    /** 大类中文名，与前端 AssetOverview 的图例一致；顺序固定，前端按 category 取色 */
+    private static final Map<String, String> CATEGORY_LABELS = new LinkedHashMap<>();
 
-    /** allocation 固定返回顺序（即使为 0） */
-    private static final List<String> CATEGORY_ORDER = List.of("fund", "stock", "bond", "cash");
+    /** 分布维度：category 之外支持的三列，取值与前端 DistributionDim 一致 */
+    private static final List<String> DISTRIBUTION_DIMS = List.of("industry", "region", "currency");
 
-    private static final Map<String, String> CATEGORY_LABELS = Map.of(
-            "fund", "基金",
-            "stock", "股票",
-            "bond", "债券",
-            "cash", "现金"
-    );
-
-    private static final Set<String> DISTRIBUTION_DIMS = Set.of("industry", "region", "currency");
+    static {
+        CATEGORY_LABELS.put("fund", "基金");
+        CATEGORY_LABELS.put("stock", "股票");
+        CATEGORY_LABELS.put("bond", "债券");
+        CATEGORY_LABELS.put("cash", "现金");
+    }
 
     private final AssetMapper assetMapper;
+    private final AssetSeriesMapper assetSeriesMapper;
 
-    /** 资产总览：仅汇总进行中持仓，按大类累加 current，并追加固定现金储备 */
-    public AssetSummary summary() {
-        Map<String, Long> sumByCategory = new LinkedHashMap<>();
-        for (String category : CATEGORY_ORDER) {
-            sumByCategory.put(category, 0L);
-        }
-        for (CategorySum row : assetMapper.selectActiveCategorySums()) {
-            if (sumByCategory.containsKey(row.getCategory()) && row.getValue() != null) {
-                sumByCategory.put(row.getCategory(), row.getValue());
-            }
-        }
-        sumByCategory.merge("cash", CASH_RESERVE, Long::sum);
+    /** 资产总览：总资产 + 按大类的市值分布（四个大类恒返回，没有持仓的为 0） */
+    public AssetSummaryResponse summary(Long userId) {
+        Map<String, BigDecimal> totals = latestTotals(userId);
 
-        List<Allocation> allocation = CATEGORY_ORDER.stream()
-                .map(category -> new Allocation(category,
-                        CATEGORY_LABELS.get(category),
-                        sumByCategory.get(category)))
+        // 四个大类先占位为 0，保证前端图例不缺项；未知分类不丢数据，按原样单列一项
+        Map<String, BigDecimal> byCategory = new LinkedHashMap<>();
+        CATEGORY_LABELS.keySet().forEach(category -> byCategory.put(category, BigDecimal.ZERO));
+        for (Asset asset : unarchivedAssets(userId)) {
+            String category = StringUtils.hasText(asset.getCategory()) ? asset.getCategory() : "fund";
+            byCategory.merge(category, valueOf(asset, totals), BigDecimal::add);
+        }
+
+        List<AssetSummaryResponse.AllocationResponse> allocation = byCategory.entrySet().stream()
+                .map(entry -> new AssetSummaryResponse.AllocationResponse(
+                        entry.getKey(),
+                        CATEGORY_LABELS.getOrDefault(entry.getKey(), entry.getKey()),
+                        entry.getValue()))
                 .toList();
-
-        AssetSummary summary = new AssetSummary();
-        summary.setAllocation(allocation);
-        summary.setTotalAssets(allocation.stream().mapToLong(Allocation::getValue).sum());
-        return summary;
+        BigDecimal totalAssets = allocation.stream()
+                .map(AssetSummaryResponse.AllocationResponse::getValue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        return new AssetSummaryResponse(totalAssets, allocation);
     }
 
     /**
-     * 资产分布。
-     *
-     * @param dim 为 null 返回全维度 Map；否则返回单维度列表，非法维度抛 400
+     * 三个维度的市值分布，固定按 industry / region / currency 的顺序返回。
+     * 一次算完而不是按 dim 单独查：个人看板的数据量下没有成本，前端切换维度也不用再请求。
      */
-    public Object distribution(String dim) {
-        if (dim == null || dim.isEmpty()) {
-            Map<String, List<DistributionItem>> data = new LinkedHashMap<>();
-            for (String key : List.of("industry", "region", "currency")) {
-                data.put(key, assetMapper.selectDistribution(key));
+    public Map<String, List<DistributionItemResponse>> distribution(Long userId) {
+        Map<String, BigDecimal> totals = latestTotals(userId);
+        List<Asset> unarchived = unarchivedAssets(userId);
+
+        Map<String, List<DistributionItemResponse>> result = new LinkedHashMap<>();
+        for (String dim : DISTRIBUTION_DIMS) {
+            result.put(dim, groupBy(unarchived, totals, dimensionGetter(dim)));
+        }
+        return result;
+    }
+
+    /** 维度取值器：三列都是资产上的字符串标签 */
+    private Function<Asset, String> dimensionGetter(String dim) {
+        return switch (dim) {
+            case "industry" -> Asset::getIndustry;
+            case "region" -> Asset::getRegion;
+            default -> Asset::getCurrency;
+        };
+    }
+
+    /** 按某一维度分组汇总市值，未填标签的资产不计入（前端空态就是「还没标」），按金额降序 */
+    private List<DistributionItemResponse> groupBy(List<Asset> assets,
+                                                   Map<String, BigDecimal> totals,
+                                                   Function<Asset, String> getter) {
+        Map<String, BigDecimal> sums = new LinkedHashMap<>();
+        for (Asset asset : assets) {
+            String name = getter.apply(asset);
+            if (!StringUtils.hasText(name)) {
+                continue;
             }
-            return data;
+            sums.merge(name.trim(), valueOf(asset, totals), BigDecimal::add);
         }
-        if (!DISTRIBUTION_DIMS.contains(dim)) {
-            throw BusinessException.badRequest("未知的分布维度: " + dim);
+        List<DistributionItemResponse> items = new ArrayList<>();
+        sums.forEach((name, value) -> items.add(new DistributionItemResponse(name, value)));
+        items.sort(Comparator.comparing(DistributionItemResponse::getValue).reversed());
+        return items;
+    }
+
+    /** 某资产当前市值：优先取序列末行，没有序列则用 asset 表的快照 */
+    private BigDecimal valueOf(Asset asset, Map<String, BigDecimal> totals) {
+        BigDecimal value = totals.get(asset.getCode());
+        if (value != null) {
+            return value;
         }
-        return assetMapper.selectDistribution(dim);
+        return asset.getTotal() == null ? BigDecimal.ZERO : asset.getTotal();
+    }
+
+    /** 每个 code 最新一天的市值 */
+    private Map<String, BigDecimal> latestTotals(Long userId) {
+        Map<String, BigDecimal> totals = new LinkedHashMap<>();
+        for (AssetSeries row : assetSeriesMapper.findLatestPerCode(userId)) {
+            totals.put(row.getCode(), row.getTotal());
+        }
+        return totals;
+    }
+
+    /** 未归档的资产：归档（asset.archived = 1）是从总览与分布里移出的唯一开关，与定投是否进行中无关 */
+    private List<Asset> unarchivedAssets(Long userId) {
+        return assetMapper.findByUser(userId).stream()
+                .filter(asset -> !Boolean.TRUE.equals(asset.getArchived()))
+                .toList();
     }
 }

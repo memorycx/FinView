@@ -1,6 +1,6 @@
 import type { Component } from 'vue'
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
-import { Pencil, Repeat, Sparkles, Target } from '@lucide/vue'
+import { Pencil, Sparkles, Target } from '@lucide/vue'
 import Dashboard from '@/components/Dashboard.vue'
 
 declare module 'vue-router' {
@@ -59,22 +59,11 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '计划详情', requiresAuth: true },
   },
   {
-    path: '/adjust',
-    name: 'adjust',
-    component: () => import('@/views/PlaceholderView.vue'),
+    path: '/entry',
+    name: 'entry',
+    component: () => import('@/views/EntryView.vue'),
     meta: {
-      title: '修订定投',
-      desc: '结合市场估值与个人现金流，一键调整各只基金的定投金额与周期，纪律投资更从容。',
-      icon: Repeat,
-      requiresAuth: true,
-    },
-  },
-  {
-    path: '/manual-entry',
-    name: 'manual-entry',
-    component: () => import('@/views/PlaceholderView.vue'),
-    meta: {
-      title: '手动录入',
+      title: '录入数据',
       desc: '手动录入每一笔买卖与收益变动，让数据记录更灵活。',
       icon: Pencil,
       requiresAuth: true,

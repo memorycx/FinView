@@ -4,46 +4,54 @@ import com.finview.entity.User;
 import com.finview.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 /**
- * 应用启动时初始化默认管理员账号（若不存在）。
- * 避免在 SQL 中硬编码 BCrypt 哈希值。
+ * 启动时补齐测试账号，让前端登录页提示的两个账号可直接登录：
+ *   admin / admin123（管理员）
+ *   demo  / demo123（普通用户）
+ *
+ * 密码必须由 PasswordEncoder 现算，不能写死在 data.sql 里（BCrypt 无法用 SQL 生成）。
+ * 已存在则跳过，因此不会覆盖用户自己注册或改过密码的账号。
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class DataInitializer implements CommandLineRunner {
+public class DataInitializer implements ApplicationRunner {
+
+    private static final String ROLE_ADMIN = "admin";
+    private static final String ROLE_USER = "user";
 
     private final UserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
 
     @Override
-    public void run(String... args) {
-        // 初始管理员: admin / admin123
-        if (userMapper.findByUsername("admin") == null) {
-            User admin = new User();
-            admin.setUsername("admin");
-            admin.setPassword(passwordEncoder.encode("admin123"));
-            admin.setNickname("系统管理员");
-            admin.setRole("ADMIN");
-            admin.setEnabled(true);
-            userMapper.insert(admin);
-            log.info("初始化默认管理员账号: admin / admin123");
+    public void run(ApplicationArguments args) {
+        seed("admin", "admin123", "管理员", "admin@finview.local", ROLE_ADMIN);
+        seed("demo", "demo123", "普通用户", "demo@finview.local", ROLE_USER);
+    }
+
+    private void seed(String username, String rawPassword, String nickname, String email, String role) {
+        if (userMapper.countByUserName(username) > 0) {
+            return;
         }
 
-        // 初始普通用户: demo / demo123
-        if (userMapper.findByUsername("demo") == null) {
-            User demo = new User();
-            demo.setUsername("demo");
-            demo.setPassword(passwordEncoder.encode("demo123"));
-            demo.setNickname("演示用户");
-            demo.setRole("USER");
-            demo.setEnabled(true);
-            userMapper.insert(demo);
-            log.info("初始化演示账号: demo / demo123");
+        User user = new User();
+        user.setUserName(username);
+        user.setPassword(passwordEncoder.encode(rawPassword));
+        user.setNickname(nickname);
+        user.setEmail(email);
+        user.setRole(role);
+
+        try {
+            userMapper.insert(user);
+            log.info("已初始化测试账号：{}（角色 {}）", username, role);
+        } catch (Exception ex) {
+            // 种子数据只是便利，失败不该拖垮启动
+            log.warn("初始化测试账号 {} 失败：{}", username, ex.getMessage());
         }
     }
 }

@@ -18,6 +18,8 @@ export interface RequestConfig {
   method?: HttpMethod
   /** 查询参数，值为 undefined 的项会被忽略 */
   params?: Record<string, string | number | undefined>
+  /** 请求体（POST/PUT/PATCH），会被 JSON 序列化 */
+  body?: unknown
 }
 
 /** 后端统一响应包 */
@@ -49,6 +51,7 @@ async function realRequest<T>(cfg: RequestConfig): Promise<T> {
   const response = await fetch(`${BASE_URL}${cfg.url}${buildQuery(cfg.params)}`, {
     method: cfg.method ?? 'GET',
     headers,
+    ...(cfg.body !== undefined ? { body: JSON.stringify(cfg.body) } : {}),
   })
 
   // 401 未授权 → 清除登录状态并跳转登录页
@@ -121,7 +124,11 @@ async function mockRequest<T>(cfg: RequestConfig): Promise<T> {
   }
 
   await mockDelay()
-  return matched.route.handle({ params: matched.params, query } satisfies MockRouteContext) as T
+  return matched.route.handle({
+    params: matched.params,
+    query,
+    body: cfg.body,
+  } satisfies MockRouteContext) as T
 }
 
 /* ==================== 对外入口 ==================== */

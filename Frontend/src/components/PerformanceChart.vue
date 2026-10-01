@@ -35,8 +35,14 @@ const props = defineProps<{
   series: DayPoint[]
   title: string
   subtitle: string
-  /** 开始时间 YYYY-MM，用于投资时长/年化收益计算 */
+  /** 开始时间 YYYY-MM，用于「开始时间 / 已投资时长」展示 */
   startDate?: string
+  /**
+   * 后端算的 XIRR 年化收益率（0.08 = 8%）：按每笔投入实际在场的天数折年，
+   * 与上面的「收益率」（期末简单收益率）不是一回事。
+   * null = 持有不足 30 天或无法计算，显示「—」
+   */
+  annualizedRate?: number | null
 }>()
 
 const mode = ref<Mode>('value')
@@ -108,12 +114,45 @@ watch(isDark, async () => {
 
 const last = computed(() => props.series[props.series.length - 1])
 
+/** 截至当日的累计手续费：按全量 series 累加（与时间范围筛选无关，否则区间内的收益会漏掉更早的手续费） */
+const feeCumulative = computed(() => {
+  const map = new Map<string, number>()
+  let cum = 0
+  for (const p of props.series) {
+    cum += p.fee
+    map.set(p.day, cum)
+  }
+  return map
+})
+const cumFee = (day: string) => feeCumulative.value.get(day) ?? 0
 
-const totalProfit = computed(() => last.value.total - last.value.principal)
-const rate = computed(() =>
-  last.value.principal === 0 ? 0 : totalProfit.value / last.value.principal,
-)
+/** 累计收益 = 市值 − 本金 − 累计手续费（本金是净投入，卖出已冲减，所以跨清仓连续） */
+const lastFee = computed(() => cumFee(last.value.day))
+const totalProfit = computed(() => last.value.total - last.value.principal - lastFee.value)
+
+/** 当日的累计投入：后端给 invested；mock 的手写序列没有它，按「本金 + 当日累计手续费」兜底 */
+const investedOn = (p: DayPoint) => p.invested ?? p.principal + cumFee(p.day)
+
+/**
+ * 收益率 = 累计收益 / 累计投入。
+ * 分母不用「本金 + 手续费」：清过仓的基金本金会变成负数，那样会算出 +297% 这种假数字
+ * （口径见 CLAUDE.md；没清过仓时两个分母相等）
+ */
+const rate = computed(() => {
+  const invested = investedOn(last.value)
+  return invested === 0 ? 0 : totalProfit.value / invested
+})
 const positive = computed(() => totalProfit.value >= 0)
+
+/**
+ * 整段序列的市值都等于本金 = 这只基金还没有抓到过净值（估值兜底为 1）：
+ * 图表是两条重叠的平线、收益恒 0，和「真的零收益」长得一样，给个提示避免误判成没数据。
+ */
+const navPending = computed(
+  () =>
+    props.series.length > 0 &&
+    props.series.every((p) => Math.abs(p.total - p.principal) < 0.005),
+)
 
 
 
@@ -128,7 +167,10 @@ const chartSeries = computed(() => {
 
 
 const profitData = computed(() =>
-  chartSeries.value.map((p) => ({ day: p.day, profit: p.total - p.principal })),
+  chartSeries.value.map((p) => ({
+    day: p.day,
+    profit: p.total - p.principal - cumFee(p.day),
+  })),
 )
 
 /** 汇总统计（始终基于完整区间） */
@@ -140,10 +182,6 @@ const stats = computed(() => {
   const months = (ey - sy) * 12 + (em - sm)
   const years = Math.max(0, Math.floor(months / 12))
   const remMonths = Math.max(0, months % 12)
-  const cagr =
-    months > 0 && last.value.principal > 0 && last.value.total > last.value.principal
-      ? Math.pow(last.value.total / last.value.principal, 12 / months) - 1
-      : 0
   return {
     startLabel: startDay,
     startShort: startDay.slice(0, 7),
@@ -153,7 +191,6 @@ const stats = computed(() => {
     total: last.value.total,
     profit: totalProfit.value,
     rate: rate.value,
-    cagr,
   }
 })
 
@@ -161,8 +198,13 @@ function toggleMode() {
   mode.value = mode.value === 'value' ? 'profit' : 'value'
 }
 
+/** 年化收益率：后端 XIRR，null（持有不足 1 个月 / 无法计算）显示「—」；负数自带负号 */
+function formatAnnualized(n: number | null | undefined) {
+  return n == null ? '—' : `${(n * 100).toFixed(1)}%`
+}
+
 function signedCNY(n: number) {
-  return (n >= 0 ? '+' : '-') + '¥' + Math.abs(n).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+  return (n >= 0 ? '+' : '-') + '¥' + Math.abs(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function baseTooltip() {
@@ -300,10 +342,14 @@ const days = chartSeries.value.map((p) => p.day)
             value: number
             axisValue: string
           }>
+          const day = arr[0]?.axisValue ?? ''
+          const point = chartSeries.value.find((p) => p.day === day)
           const total = arr.find((p) => p.seriesName === 'total')?.value ?? 0
           const principal = arr.find((p) => p.seriesName === 'principal')?.value ?? 0
-          const profit = total - principal
-          const r = principal === 0 ? 0 : profit / principal
+          const fee = cumFee(day)
+          const profit = total - principal - fee
+          const invested = point ? investedOn(point) : principal + fee
+          const r = invested === 0 ? 0 : profit / invested
           return `<div style="min-width:200px">
             <div style="font-weight:700;font-size:14px;color:${foreground};margin-bottom:4px">${arr[0]?.axisValue ?? ''}</div>
             <div style="margin-top:8px"><span style="color:${axisLabelColor}">${tipDot(colorTotal)}</span><span style="color:${axisLabelColor}">总持仓</span></div>
@@ -312,6 +358,7 @@ const days = chartSeries.value.map((p) => p.day)
             ${tipRow('', formatCNY(principal))}
             <div style="border-top:1px solid ${gridColor};margin:10px 0 2px"></div>
             ${tipRow('累计收益', signedCNY(profit), gainColor)}
+            ${tipRow('累计手续费', formatCNY(fee))}
             ${tipRow('收益率', formatPct(r), gainColor)}
           </div>`
         },
@@ -422,7 +469,9 @@ const days = chartSeries.value.map((p) => p.day)
             <p class="font-mono text-4xl font-bold leading-tight tracking-tight tabular-nums text-foreground">
               {{ formatCNY(stats.total) }}
             </p>
-            <p class="text-xs text-muted-foreground">本金 {{ formatCNY(stats.principal) }}</p>
+            <p class="text-xs text-muted-foreground">
+              本金 {{ formatCNY(stats.principal) }} · 手续费 {{ formatCNY(lastFee) }}
+            </p>
           </div>
           <div class="space-y-1 sm:px-8">
             <p class="text-xs font-medium text-muted-foreground">累计收益</p>
@@ -442,8 +491,11 @@ const days = chartSeries.value.map((p) => p.day)
           </div>
           <div class="space-y-1 sm:pl-8">
             <p class="text-xs font-medium text-muted-foreground">年化收益率</p>
-            <p class="font-mono text-4xl font-bold leading-tight tracking-tight tabular-nums text-foreground">
-              {{ (stats.cagr * 100).toFixed(1) }}%
+            <p
+              class="font-mono text-4xl font-bold leading-tight tracking-tight tabular-nums text-foreground"
+              :title="annualizedRate == null ? '持有不足 1 个月或现金流无法求解，暂不显示年化' : undefined"
+            >
+              {{ formatAnnualized(annualizedRate) }}
             </p>
             <p class="text-xs text-muted-foreground">(自 {{ stats.startShort }})</p>
           </div>
@@ -478,6 +530,13 @@ const days = chartSeries.value.map((p) => p.day)
         </div>
 
         <div class="flex items-center gap-5">
+          <span
+            v-if="navPending"
+            class="rounded-full border border-border bg-muted/60 px-3 py-1 text-xs text-muted-foreground"
+            title="该基金还没有抓到净值：市值暂按本金计，登录时会自动补抓"
+          >
+            净值待更新 · 市值暂按本金计
+          </span>
           <div class="relative inline-flex rounded-full border border-border bg-background p-1 text-sm">
             <div
               class="absolute top-1 bottom-1 rounded-full bg-brand shadow-sm transition-all duration-300 ease-out"

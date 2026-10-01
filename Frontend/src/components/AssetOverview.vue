@@ -20,7 +20,8 @@ import type { AssetCategory } from '@/api/types'
 use([CanvasRenderer, EChartsPieChart, TooltipComponent, TitleComponent])
 
 const { data: summary } = useRequest(() => getAssetSummary())
-const { data: activeFunds } = useRequest(() => getFunds({ status: 'active' }))
+// status=active 在后端就是「未归档」：持仓集中度必须与总览（同样未归档口径）用同一批资产
+const { data: currentFunds } = useRequest(() => getFunds({ status: 'active' }))
 
 /** 按资产大类的市值配置 */
 const allocation = computed(() => summary.value?.allocation ?? [])
@@ -110,7 +111,7 @@ function pctOf(value: number) {
 // 风险集中度：按个体持仓（含现金储备）降序排列
 const holdings = computed(() => {
   const cash = allocation.value.find((a) => a.category === 'cash')?.value ?? 0
-  return [...(activeFunds.value ?? []).map((f) => f.current), cash].sort((a, b) => b - a)
+  return [...(currentFunds.value ?? []).map((f) => f.current), cash].sort((a, b) => b - a)
 })
 
 /** 最大单一资产占比 */

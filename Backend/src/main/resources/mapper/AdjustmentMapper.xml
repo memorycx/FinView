@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.finview.mapper.AdjustmentMapper">
+
+    <!-- date / action 是 MySQL 关键字，统一加反引号，与 schema.sql 保持一致 -->
+    <sql id="baseColumns">
+        adjustment_id, user_id, code, `date`, reason, `action`, frequency, amount, note
+    </sql>
+
+    <!-- useGeneratedKeys 把自增的 adjustment_id 回填到实体 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="adjustmentId">
+        INSERT INTO `adjustments` (user_id, code, `date`, reason, `action`, frequency, amount, note)
+        VALUES (#{userId}, #{code}, #{date}, #{reason}, #{action}, #{frequency}, #{amount}, #{note})
+    </insert>
+
+    <select id="findByIdAndUser" resultType="Adjustment">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM `adjustments`
+        WHERE adjustment_id = #{adjustmentId}
+          AND user_id = #{userId}
+    </select>
+
+    <!--
+      user_id 是必填条件，其余过滤项为 null 时整段省略。
+      排序按日期倒序（最近的记录在前），同日多条按插入顺序倒序，保证结果稳定。
+    -->
+    <select id="findByUser" resultType="Adjustment">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM `adjustments`
+        WHERE user_id = #{userId}
+        <if test="code != null and code != ''">
+            AND code = #{code}
+        </if>
+        <if test="action != null">
+            AND `action` = #{action}
+        </if>
+        <if test="startDate != null">
+            AND `date` &gt;= #{startDate}
+        </if>
+        <if test="endDate != null">
+            AND `date` &lt;= #{endDate}
+        </if>
+        ORDER BY `date` DESC, adjustment_id DESC
+    </select>
+
+    <!--
+      整条覆盖更新。user_id 不参与 set：记录归属一旦写入就不再变动，
+      同时 where 里再带一次 user_id，越权改别人的记录会命中 0 行。
+    -->
+    <update id="updateByIdAndUser">
+        UPDATE `adjustments`
+        SET code      = #{code},
+            `date`    = #{date},
+            reason    = #{reason},
+            `action`  = #{action},
+            frequency = #{frequency},
+            amount    = #{amount},
+            note      = #{note}
+        WHERE adjustment_id = #{adjustmentId}
+          AND user_id = #{userId}
+    </update>
+
+    <delete id="deleteByIdAndUser">
+        DELETE FROM `adjustments`
+        WHERE adjustment_id = #{adjustmentId}
+          AND user_id = #{userId}
+    </delete>
+
+    <!--
+      同一天「定投开始」与「结束定投」不能并存（表设计.md：当天既开始又结束属于离散收支，
+      在业务层拦截）。excludeId 用于修改场景排除自己。
+    -->
+    <select id="countByUserCodeDayAction" resultType="int">
+        SELECT COUNT(*)
+        FROM `adjustments`
+        WHERE user_id = #{userId}
+          AND code = #{code}
+          AND `date` = #{date}
+          AND `action` = #{action}
+        <if test="excludeId != null">
+            AND adjustment_id != #{excludeId}
+        </if>
+    </select>
+
+</mapper>
