@@ -3,6 +3,7 @@ package com.finview.mapper;
 import com.finview.entity.AssetSeries;
 import org.apache.ibatis.annotations.Param;
 
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 
@@ -22,6 +23,14 @@ public interface AssetSeriesMapper {
 
     /** 删掉某 code 的全部序列行，重建前先清空 */
     int deleteByUserAndCode(@Param("userId") Long userId, @Param("code") String code);
+
+    /**
+     * 删掉某 code 在 [from, to] 之外的序列行，保留闭区间内的。
+     * 整段重算是 upsert，只覆盖它写到的那几天；删掉最早的调整记录、或把最早那条的日期改晚时，
+     * 序列起点会后移，起点之前的旧行得靠这条清理，否则会永远留在库里。
+     */
+    int deleteOutsideRange(@Param("userId") Long userId, @Param("code") String code,
+                           @Param("from") LocalDate from, @Param("to") LocalDate to);
 
     /** 某 code 的完整序列，按日期升序 */
     List<AssetSeries> findByUserAndCode(@Param("userId") Long userId, @Param("code") String code);

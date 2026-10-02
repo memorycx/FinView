@@ -91,3 +91,9 @@ logs/
 
 *.py
 data.json
+
+
+# 临时的数据
+
+*.csv
+

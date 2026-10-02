@@ -2,6 +2,7 @@
 import type { Component } from 'vue'
 import { Construction } from '@lucide/vue'
 import Card from '@/components/ui/card/Card.vue'
+import PageFooter from '@/components/PageFooter.vue'
 
 defineProps<{
   icon: Component
@@ -11,9 +12,11 @@ defineProps<{
 </script>
 
 <template>
-  <div
-    class="mx-auto flex min-h-[70vh] w-full max-w-[1400px] items-center justify-center px-4 py-16 sm:px-6 lg:px-8"
-  >
+  <!-- min-h-screen + flex-col：占位卡片居中，脚注落在界面底部 -->
+  <div class="flex min-h-screen flex-col">
+    <div
+      class="mx-auto flex w-full max-w-[1400px] flex-1 items-center justify-center px-4 py-16 sm:px-6 lg:px-8"
+    >
     <Card
       class="flex w-full max-w-lg flex-col items-center gap-4 px-8 py-14 text-center"
     >
@@ -31,5 +34,8 @@ defineProps<{
         功能建设中 · 敬请期待
       </span>
     </Card>
+    </div>
+
+    <PageFooter />
   </div>
 </template>

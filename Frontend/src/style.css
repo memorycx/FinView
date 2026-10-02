@@ -205,15 +205,18 @@
 }
 
 /*
- * 投资看板根容器：大屏锁定一屏（卡片内部滚动）
- * 视口高度不足（≤820px）时解除锁定，让中间容器保持自然高度，整页可纵向滚动
+ * 大屏锁定一屏的页面根容器（投资看板 dashboard-scroll、我的资产 page-scroll）：
+ * 高度 = 视口高度，卡片跟着拉到页面底部并各自内部滚动 —— 卡片高度不再随内容（基金只数、
+ * 排行榜筛选）变化。视口高度不足（≤820px）时解除锁定，让中间容器保持自然高度，整页可纵向滚动
  */
 @media (min-width: 1024px) {
-  .dashboard-scroll {
+  .dashboard-scroll,
+  .page-scroll {
     height: 100vh;
     overflow: hidden;
   }
 }
+/* 投资看板：视口不够高时先解锁，免得图表卡被压得太扁 */
 @media (min-width: 1024px) and (max-height: 820px) {
   .dashboard-scroll {
     height: auto;
@@ -225,6 +228,65 @@
     min-height: auto !important;
     flex: 0 1 auto !important;
     height: auto !important;
+  }
+}
+/* 我的资产：卡片里没有高度敏感的内容（环形图按宽度定尺寸，超高就在卡片内滚），
+   门槛放低到 640px —— 正常窗口下始终锁死，「卡片高度不随内容（基金只数 / 筛选）变化」才成立 */
+@media (min-width: 1024px) and (max-height: 640px) {
+  .page-scroll {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+  .page-scroll .ds-flex {
+    min-height: auto !important;
+    flex: 0 1 auto !important;
+    height: auto !important;
+  }
+}
+
+/*
+ * 「我的资产」大屏的视觉居中：主体（环形图/列表）+ 下方指标块整体随视口高度下移，
+ * 让最抢眼的环形图从卡片上半段落向中线。下移量吃的是名言上方 mt-auto 的余白，
+ * 所以按高度分档、只在余白足够时加 padding，矮窗口（内容刚好填满）不生效，避免撑出内部滚动。
+ * xl 基准 padding-top 92px（Tailwind arbitrary），这里叠加：
+ */
+@media (min-width: 1280px) and (min-height: 1180px) {
+  .main-allocation {
+    padding-top: 142px;
+  }
+}
+@media (min-width: 1280px) and (min-height: 1320px) {
+  .main-allocation {
+    padding-top: 192px;
+  }
+}
+
+/*
+ * 「我的资产」卡片底部的名言。字号跟视口高度联动：大屏（卡片被拉高、下方留白多）时放大，
+ * 让它成为内容的一部分；留白少时维持小字号，只当一句安静的收尾。
+ * 署名的大小与上方留白都用 em，跟正文一起缩放（1em 正文高，1.5em ≈ 空 0.9 行）。
+ * 只在 xl + 高视口生效：lg 时卡片窄、内容本身已经很高，本来就没有留白可占。
+ */
+.asset-quote {
+  font-size: 13px;
+  line-height: 1.75;
+}
+.asset-quote > blockquote {
+  letter-spacing: 0.03em;
+}
+.asset-quote > figcaption {
+  margin-top: 1.5em;
+  font-size: 0.9em;
+}
+@media (min-width: 1280px) and (min-height: 1150px) {
+  .asset-quote {
+    font-size: 17px;
+  }
+}
+@media (min-width: 1280px) and (min-height: 1400px) {
+  .asset-quote {
+    font-size: 21px;
   }
 }
 

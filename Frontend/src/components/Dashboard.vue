@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import PerformanceChart from '@/components/PerformanceChart.vue'
 import PlanPanel from '@/components/PlanPanel.vue'
 import PlanTimeline from '@/components/PlanTimeline.vue'
+import PageFooter from '@/components/PageFooter.vue'
 import Button from '@/components/ui/Button.vue'
 import { getFunds, getPortfolioSeries } from '@/api'
 import { useRequest } from '@/composables/useApi'
@@ -12,8 +13,8 @@ import { useRequest } from '@/composables/useApi'
 const route = useRoute()
 const router = useRouter()
 
-const { data: funds } = useRequest(() => getFunds({ status: 'all' }))
-const { data: portfolio } = useRequest(() => getPortfolioSeries())
+const { data: funds, reload: reloadFunds } = useRequest(() => getFunds({ status: 'all' }))
+const { data: portfolio, reload: reloadPortfolio } = useRequest(() => getPortfolioSeries())
 
 // 支持从「我的资产」排行榜跳转携带 ?fund=xxx&tab=active|archived 预选基金
 const selectedId = ref<string | null>(
@@ -38,6 +39,10 @@ const chartSeries = computed(() =>
 /** 年化收益率（XIRR）：选中基金时用它自己的，组合总览时用组合的；null 由组件显示「—」 */
 const chartAnnualizedRate = computed(() =>
   selectedFund.value ? selectedFund.value.annualizedRate : portfolio.value?.annualizedRate ?? null,
+)
+/** 折线图页脚「最后更新」：选中基金时用它自己 asset 行的时间，组合总览用后端给的全部资产 MAX */
+const chartLastUpdate = computed(() =>
+  selectedFund.value ? selectedFund.value.lastUpdateTime : portfolio.value?.lastUpdateTime ?? null,
 )
 const chartTitle = computed(() =>
   selectedFund.value ? selectedFund.value.name : '投资组合总览',
@@ -74,6 +79,12 @@ function handleTabChange(t: 'active' | 'archived') {
   selectedId.value = null
   view.value = 'list'
 }
+
+/** 序列在详情页重新生成后：组合走势汇总的就是各 code 的 asset_series，两份数据都要重拉 */
+function handleGenerated() {
+  reloadFunds()
+  reloadPortfolio()
+}
 </script>
 
 <template>
@@ -98,21 +109,19 @@ function handleTabChange(t: 'active' | 'archived') {
     <div class="ds-flex lg:min-h-0 lg:flex-1">
       <!-- xl 以上双列：左绩效图表（视觉核心）/ 右计划列表+时间轴；中等屏单列堆叠 -->
       <div class="ds-flex grid gap-4 lg:h-full lg:gap-5 xl:grid-cols-[1.7fr_1fr]">
-        <!-- 数据加载完成前用占位块撑住布局，避免图表区跳动 -->
+        <!--
+          始终渲染图表卡：没有数据（新用户 / 加载中）时也保持基本框架，
+          数值位显示「—」，左右两张卡片的高度才不会一边空一块。
+        -->
         <PerformanceChart
-          v-if="chartSeries.length > 0"
           :series="chartSeries"
           :title="chartTitle"
           :subtitle="chartSubtitle"
           :start-date="chartStartDate"
           :annualized-rate="chartAnnualizedRate"
+          :last-update-time="chartLastUpdate"
+          @generated="handleGenerated"
         />
-        <div
-          v-else
-          class="flex items-center justify-center rounded-2xl border border-border bg-card text-sm text-muted-foreground"
-        >
-          数据加载中…
-        </div>
         <!-- 右列：顶部加不可见占位标题块，与左侧 PerformanceChart 卡片顶部对齐 -->
         <div class="ds-flex flex h-full min-h-0 flex-col">
           <div
@@ -131,6 +140,7 @@ function handleTabChange(t: 'active' | 'archived') {
               @tab-change="handleTabChange"
               @select="handleSelect"
               @view-change="view = $event"
+              @generated="handleGenerated"
             />
             <!-- <PlanTimeline class="lg:shrink-0" :fund="selectedFund" :funds="timelineFunds" /> -->
           </div>
@@ -138,10 +148,6 @@ function handleTabChange(t: 'active' | 'archived') {
       </div>
     </div>
 
-    <footer
-      class="shrink-0 border-t border-border pt-6 text-center text-xs text-muted-foreground mt-8 lg:mt-4 lg:pt-4"
-    >
-      数据仅用于展示与分析，不构成任何投资建议
-    </footer>
+    <PageFooter />
   </div>
 </template>

@@ -3,14 +3,20 @@ import type { Fund, SavingsPlan } from '../types'
 /**
  * Mock 数据库：与后端存储同构的原始数据集。
  * 聚合类数据（组合走势、资产总览等）由 mock/handlers 实时计算，不在此冗余存储。
+ *
+ * 类型必须显式注解成 Fund[] / SavingsPlan[]（而不是 satisfies）：
+ * handlers 的「编辑 / 新增记录」会往 funds[].adjustments 里 push，
+ * 字面量推导出来的联合类型数组接不住一条通用的 PlanAdjustment。
  */
-export const db = {
+export const db: { funds: Fund[]; savingsPlans: SavingsPlan[] } = {
   funds: [
     {
       id: 'csi300',
       name: '沪深300指数增强',
       code: '005827',
       category: 'fund',
+      // 基金细分类型（asset.asset_type）：股基；两套 fixture 都是股基，债基桶在 mock 里是 0
+      assetType: 'equity',
       active: true,
       archived: false,
       frequency: 'monthly',
@@ -21,6 +27,8 @@ export const db = {
       fee: 0,
       // 后端 XIRR 年化，mock 里写死一个估值（不在前端再实现一套求解）
       annualizedRate: 0.0832,
+      // 最后更新时间（后端 asset.last_update_time），mock 固定一个值；组合总览取各资产里最新的
+      lastUpdateTime: '2026-10-02T10:24:00',
       // 临时随机 mock 数据（测试用）：本金逐月递增、市值随机波动，末点与 principal/current 对齐
       series: [
         { day: '2019-03-01', principal: 0, total: 0, fee: 0 },
@@ -115,6 +123,7 @@ export const db = {
       name: '纳斯达克100(QDII)',
       code: '270042',
       category: 'fund',
+      assetType: 'equity',
       active: true,
       archived: false,
       frequency: 'weekly',
@@ -125,6 +134,8 @@ export const db = {
       fee: 0,
       // 后端 XIRR 年化，mock 里写死一个估值（不在前端再实现一套求解）
       annualizedRate: 0.1257,
+      // 最后更新时间（后端 asset.last_update_time），mock 固定一个值
+      lastUpdateTime: '2026-10-01T18:05:00',
       series: [
         { day: '2020-01-01', principal: 0, total: 0, fee: 0 },
         { day: '2020-02-01', principal: 2708, total: 2686, fee: 0 },
@@ -201,7 +212,7 @@ export const db = {
         { id: 'b2', date: '2023-02-20', reason: 'AI 主线景气度提升', action: '上调金额', frequency: 'weekly', amount: 600 },
       ],
     }
-  ] satisfies Fund[],
+  ],
 
   savingsPlans: [
     {
@@ -257,5 +268,7 @@ export const db = {
         { month: '2025-11', amount: 8000 },
       ],
     }
-  ] satisfies SavingsPlan[],
-} as const
+  ],
+}
+// 注意：不要加 `as const`，也不要退回 `satisfies` —— 前者把数组推成 readonly 元组、
+// 后者保留字面量推导出的联合类型，都会让 handlers 往 funds[].adjustments 里 push 时报 never。

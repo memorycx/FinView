@@ -16,10 +16,11 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 /**
- * 资产分析业务：总览（按大类汇总市值）与分布（行业 / 区域 / 币种）。
+ * 资产分析业务：总览（按展示桶汇总市值，基金按 asset_type 细分成股票基金 / 债券基金）与分布（行业 / 区域 / 币种）。
  *
  * 两个接口都只统计**未归档**的资产（asset.archived = 0）：归档是用户手工标记的「移出当前视图」，
  * 定投结束但没归档的仍算持有、仍计入。前端的 AssetOverview 与 Leaderboard 拿总览里的总资产
@@ -32,44 +33,56 @@ import java.util.function.Function;
 @RequiredArgsConstructor
 public class AssetService {
 
-    /** 大类中文名，与前端 AssetOverview 的图例一致；顺序固定，前端按 category 取色 */
-    private static final Map<String, String> CATEGORY_LABELS = new LinkedHashMap<>();
+    /**
+     * 展示桶的中文名，与前端 AssetOverview 的图例一致；顺序固定，前端按桶 key 取色。
+     * 基金不单独成桶：按 asset.asset_type 细分成股票基金（equityFund）/ 债券基金（bondFund）。
+     */
+    private static final Map<String, String> BUCKET_LABELS = new LinkedHashMap<>();
 
     /** 分布维度：category 之外支持的三列，取值与前端 DistributionDim 一致 */
     private static final List<String> DISTRIBUTION_DIMS = List.of("industry", "region", "currency");
 
+    /** 安全资金的 asset_type 取值：债基 + 现金（2026-10-02 约定，见 AssetSummaryResponse.safeAssets） */
+    private static final Set<String> SAFE_ASSET_TYPES = Set.of("bond", "cash");
+
     static {
-        CATEGORY_LABELS.put("fund", "基金");
-        CATEGORY_LABELS.put("stock", "股票");
-        CATEGORY_LABELS.put("bond", "债券");
-        CATEGORY_LABELS.put("cash", "现金");
+        BUCKET_LABELS.put("equityFund", "股票基金");
+        BUCKET_LABELS.put("bondFund", "债券基金");
+        BUCKET_LABELS.put("stock", "股票");
+        BUCKET_LABELS.put("bond", "债券");
+        BUCKET_LABELS.put("cash", "现金");
     }
 
     private final AssetMapper assetMapper;
     private final AssetSeriesMapper assetSeriesMapper;
 
-    /** 资产总览：总资产 + 按大类的市值分布（四个大类恒返回，没有持仓的为 0） */
+    /** 资产总览：总资产 + 安全资金 + 按展示桶的市值分布（五个桶恒返回，没有持仓的为 0） */
     public AssetSummaryResponse summary(Long userId) {
         Map<String, BigDecimal> totals = latestTotals(userId);
 
-        // 四个大类先占位为 0，保证前端图例不缺项；未知分类不丢数据，按原样单列一项
-        Map<String, BigDecimal> byCategory = new LinkedHashMap<>();
-        CATEGORY_LABELS.keySet().forEach(category -> byCategory.put(category, BigDecimal.ZERO));
+        // 五个展示桶先占位为 0，保证前端图例不缺项；未知分类不丢数据，按原样单列一项。
+        // 顺手累加安全资金：asset_type ∈ {bond, cash} 的市值（未标注的按「非安全」计）
+        Map<String, BigDecimal> byBucket = new LinkedHashMap<>();
+        BUCKET_LABELS.keySet().forEach(bucket -> byBucket.put(bucket, BigDecimal.ZERO));
+        BigDecimal safeAssets = BigDecimal.ZERO;
         for (Asset asset : unarchivedAssets(userId)) {
-            String category = StringUtils.hasText(asset.getCategory()) ? asset.getCategory() : "fund";
-            byCategory.merge(category, valueOf(asset, totals), BigDecimal::add);
+            BigDecimal value = valueOf(asset, totals);
+            byBucket.merge(bucketOf(asset), value, BigDecimal::add);
+            if (SAFE_ASSET_TYPES.contains(asset.getAssetType())) {
+                safeAssets = safeAssets.add(value);
+            }
         }
 
-        List<AssetSummaryResponse.AllocationResponse> allocation = byCategory.entrySet().stream()
+        List<AssetSummaryResponse.AllocationResponse> allocation = byBucket.entrySet().stream()
                 .map(entry -> new AssetSummaryResponse.AllocationResponse(
                         entry.getKey(),
-                        CATEGORY_LABELS.getOrDefault(entry.getKey(), entry.getKey()),
+                        BUCKET_LABELS.getOrDefault(entry.getKey(), entry.getKey()),
                         entry.getValue()))
                 .toList();
         BigDecimal totalAssets = allocation.stream()
                 .map(AssetSummaryResponse.AllocationResponse::getValue)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        return new AssetSummaryResponse(totalAssets, allocation);
+        return new AssetSummaryResponse(totalAssets, safeAssets, allocation);
     }
 
     /**
@@ -112,6 +125,19 @@ public class AssetService {
         sums.forEach((name, value) -> items.add(new DistributionItemResponse(name, value)));
         items.sort(Comparator.comparing(DistributionItemResponse::getValue).reversed());
         return items;
+    }
+
+    /**
+     * 资产落在哪个展示桶：基金（含 category 缺行时的兜底）按 asset_type 细分，
+     * 未标注（null，存量没标过的）按股票基金算；其余大类原样返回，未知分类也单列一项、不丢数据。
+     * 包级可见是为了单测（见 AssetServiceTest），与 PortfolioService.aggregate 同一套路。
+     */
+    static String bucketOf(Asset asset) {
+        String category = StringUtils.hasText(asset.getCategory()) ? asset.getCategory() : "fund";
+        if (!"fund".equals(category)) {
+            return category;
+        }
+        return "bond".equals(asset.getAssetType()) ? "bondFund" : "equityFund";
     }
 
     /** 某资产当前市值：优先取序列末行，没有序列则用 asset 表的快照 */

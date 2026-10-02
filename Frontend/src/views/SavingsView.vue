@@ -14,6 +14,7 @@ import {
 } from '@lucide/vue'
 import Card from '@/components/ui/card/Card.vue'
 import Button from '@/components/ui/Button.vue'
+import PageFooter from '@/components/PageFooter.vue'
 import { useRequest } from '@/composables/useApi'
 import { getSavingsPlans } from '@/api'
 import {
@@ -75,7 +76,10 @@ function formatTargetMonth(d: string) {
 </script>
 
 <template>
-  <div class="mx-auto w-full max-w-[1400px] px-4 pt-6 pb-[18px] sm:px-10 lg:pt-4">
+  <!-- min-h-screen + flex-col：脚注永远落在界面底部 -->
+  <div
+    class="mx-auto flex min-h-screen w-full max-w-[1400px] flex-col px-4 pt-6 pb-[18px] sm:px-10 lg:pt-4"
+  >
     <!-- 占位：与投资看板的返回按钮区对齐 -->
     <div class="mb-4 shrink-0 lg:mb-3" aria-hidden="true">
       <div class="h-7 invisible">&nbsp;</div>
@@ -320,5 +324,7 @@ function formatTargetMonth(d: string) {
         </div>
       </Card>
     </div>
+
+    <PageFooter />
   </div>
 </template>

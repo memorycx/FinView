@@ -32,6 +32,13 @@
           AND code = #{code}
     </delete>
 
+    <delete id="deleteOutsideRange">
+        DELETE FROM `asset_series`
+        WHERE user_id = #{userId}
+          AND code = #{code}
+          AND (`day` &lt; #{from} OR `day` &gt; #{to})
+    </delete>
+
     <select id="findByUserAndCode" resultType="AssetSeries">
         SELECT
         <include refid="baseColumns"/>

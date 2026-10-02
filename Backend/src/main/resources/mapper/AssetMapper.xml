@@ -4,8 +4,8 @@
 
     <!-- asset 表的列名本身就是驼峰（startDate），靠同名字段直接映射，不依赖下划线转换 -->
     <sql id="baseColumns">
-        id, user_id, name, code, category, active, archived, frequency, rate, `startDate`, principal, total,
-        plan_id, industry, region, currency, market
+        id, user_id, name, code, category, asset_type, active, archived, frequency, rate, `startDate`, principal, total,
+        plan_id, industry, region, currency, market, last_update_time
     </sql>
 
     <select id="findByUser" resultType="Asset">
@@ -27,8 +27,8 @@
 
     <!--
       快照 upsert：靠 UNIQUE KEY idx_user_code (user_id, code) 命中冲突。
-      冲突时刻意不更新 name / category——它们是用户维护的元数据，
-      被 fold 结果覆盖掉的话，每次录入一条记录资产名就被打回 code。
+      冲突时刻意不更新 name / category / asset_type——它们是用户维护的元数据，
+      被 fold 结果覆盖掉的话，每次录入一条记录资产名（或用户标的股基/债基）就被打回默认值。
       VALUES() 在 MySQL 8.0.20 起标记为废弃，这里用行别名（8.0.19+）写法。
     -->
     <!-- 只改名字，不碰快照列：名字是用户维护的，快照是 fold 出来的 -->
@@ -39,16 +39,49 @@
           AND code = #{code}
     </update>
 
+    <!--
+      资产类型（股基 / 债基）：与 updateName 同款，只改这一列。
+      调用时必须晚于序列重建 —— 新 code 的 asset 行是重建时 upsert 插进去的，先写会命中 0 行。
+      （现金行不走这里：它的 asset_type=cash 由 upsertCashSnapshot 系统维护。）
+    -->
+    <update id="updateAssetType">
+        UPDATE `asset`
+        SET asset_type = #{assetType}
+        WHERE user_id = #{userId}
+          AND code = #{code}
+    </update>
+
     <insert id="upsertSnapshot">
-        INSERT INTO `asset` (user_id, name, code, category, active, frequency, `startDate`, principal, total)
-        VALUES (#{userId}, #{name}, #{code}, #{category}, #{active}, #{frequency},
-                #{startDate}, #{principal}, #{total}) AS incoming
+        INSERT INTO `asset` (user_id, name, code, category, asset_type, active, frequency, `startDate`, principal, total, last_update_time)
+        VALUES (#{userId}, #{name}, #{code}, #{category}, #{assetType}, #{active}, #{frequency},
+                #{startDate}, #{principal}, #{total}, #{lastUpdateTime}) AS incoming
         ON DUPLICATE KEY UPDATE
-            active      = incoming.active,
-            frequency   = incoming.frequency,
-            `startDate` = incoming.`startDate`,
-            principal   = incoming.principal,
-            total       = incoming.total
+            active           = incoming.active,
+            frequency        = incoming.frequency,
+            `startDate`      = incoming.`startDate`,
+            principal        = incoming.principal,
+            total            = incoming.total,
+            last_update_time = incoming.last_update_time
+    </insert>
+
+    <!--
+      现金快照：与 upsertSnapshot 的唯一区别是 category / asset_type 也参与冲突更新。
+      现金的分类与类型都是系统语义（决定它进 AssetService 的哪个桶、算不算安全资金），
+      不是用户元数据，所以每次刷新都纠正一遍；name 仍只在首次插入时写，用户改过名字不会被冲掉。
+    -->
+    <insert id="upsertCashSnapshot">
+        INSERT INTO `asset` (user_id, name, code, category, asset_type, active, frequency, `startDate`, principal, total, last_update_time)
+        VALUES (#{userId}, #{name}, #{code}, #{category}, #{assetType}, #{active}, #{frequency},
+                #{startDate}, #{principal}, #{total}, #{lastUpdateTime}) AS incoming
+        ON DUPLICATE KEY UPDATE
+            category         = incoming.category,
+            asset_type       = incoming.asset_type,
+            active           = incoming.active,
+            frequency        = incoming.frequency,
+            `startDate`      = incoming.`startDate`,
+            principal        = incoming.principal,
+            total            = incoming.total,
+            last_update_time = incoming.last_update_time
     </insert>
 
 </mapper>

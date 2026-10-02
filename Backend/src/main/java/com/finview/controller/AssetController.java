@@ -19,11 +19,11 @@ import java.util.Map;
 /**
  * 资产分析接口。context-path 为 /api，故实际路径是 /api/assets/**。
  *
- * GET /assets/summary                 总资产 + 按大类的市值配置
+ * GET /assets/summary                 总资产 + 安全资金 + 按展示桶的市值配置（基金细分股基/债基）
  * GET /assets/distribution            资产分布；不带 dim 返回行业/区域/币种三个维度的全部数据，
  *                                     带 dim=industry|region|currency 只返回该维度
  *
- * 两个接口都只统计定投进行中的资产，口径见 {@link AssetService}。
+ * 两个接口都只统计未归档的资产（与「持有中」一致，不看定投是否进行中），口径见 {@link AssetService}。
  * 全部需要认证（SecurityConfig 里 anyRequest().authenticated()），user_id 从 token 解析。
  */
 @RestController
@@ -33,7 +33,7 @@ public class AssetController {
 
     private final AssetService assetService;
 
-    /** 资产总览：总资产与四个大类的市值分布 */
+    /** 资产总览：总资产、安全资金与五个展示桶（股票基金/债券基金/股票/债券/现金）的市值分布 */
     @GetMapping("/summary")
     public Result<AssetSummaryResponse> summary(Authentication authentication) {
         return Result.success(assetService.summary(currentUserId(authentication)));

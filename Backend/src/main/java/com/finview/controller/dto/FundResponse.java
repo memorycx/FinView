@@ -4,6 +4,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -31,8 +32,15 @@ public class FundResponse {
     /** 资产编码 */
     private String code;
 
-    /** 资产分类 */
+    /** 资产分类：fund / stock / bond / cash */
     private String category;
+
+    /**
+     * 基金细分类型：asset.asset_type（equity 股基 / bond 债基）。
+     * null = 未标注（asset 行缺失或存量没标过），前端按股票基金显示；
+     * 现金不进 /funds（foldForUser 已滤掉），所以这里不会出现 cash。
+     */
+    private String assetType;
 
     /** 定投是否进行中 */
     private Boolean active;
@@ -67,6 +75,12 @@ public class FundResponse {
      * 与上面的「收益率」不是一回事：那个是期末的简单收益率，这个是按每笔钱在场天数折现的资金加权年化。
      */
     private BigDecimal annualizedRate;
+
+    /**
+     * 最后更新时间（asset.last_update_time）：该计划最后一次生成 / 重算序列的时刻，ISO 8601；
+     * asset 行缺失时为 null。看板折线图页脚的「最后更新」显示它（组合总览另有 PortfolioSeriesResponse）。
+     */
+    private LocalDateTime lastUpdateTime;
 
     /** 本金 / 市值走势，按日期升序逐日连续，最后一个点与 principal / current 对齐 */
     private List<DayPointResponse> series;

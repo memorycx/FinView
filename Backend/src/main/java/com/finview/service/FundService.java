@@ -67,7 +67,7 @@ public class FundService {
         // 一次取全量事件（数据量是个人看板级别，几十行），fold 出来的状态不会过期
         Map<String, PlanState> states = seriesService.foldForUser(userId, LocalDate.now());
 
-        // name / category / archived 只有 asset 表有，缺行时用默认值兜底，别让少一行元数据把接口搞挂
+        // name / category / assetType / archived 只有 asset 表有，缺行时用默认值兜底，别让少一行元数据把接口搞挂
         Map<String, Asset> assets = assetMapper.findByUser(userId).stream()
                 .collect(Collectors.toMap(Asset::getCode, Function.identity(), (a, b) -> a));
         Map<String, List<AssetSeries>> series = loadSeries(userId, states);
@@ -106,6 +106,34 @@ public class FundService {
                 .toList();
     }
 
+    /**
+     * 为单个 code 重新生成 asset_series：整段重算 + 异步补一次净值，返回生成后的序列行数。
+     *
+     * 为什么要有这个入口：读接口一律不写库（见 CLAUDE.md），序列被清空 / 缺行时，
+     * 靠页面自己恢复不了——登录走的 {@link SeriesService#advance} 被 user.update_series_time
+     * 水位挡着（当天推进过就直接返回），只有 rebuild 这条路能把行补回来。
+     *
+     * 返回 0 表示该 code 一条调整记录都没有，regenerate 会顺手清掉它的残留行。
+     */
+    public int generateSeries(Long userId, String id) {
+        seriesService.rebuildAndSyncNav(userId, id);
+        return assetSeriesMapper.findByUserAndCode(userId, id).size();
+    }
+
+    /**
+     * 一键更新**全部**资产的每日序列（组合总览页的「更新全部资产序列」按钮），返回更新的资产数。
+     *
+     * 逐个 code 走 {@link #generateSeries} 同一条路（整段重算 + 各自异步补一次净值），
+     * 范围 = fold 出来的全部 code，**含已归档**、不含现金（现金没有序列，登录推进也一样跳过）。
+     * 每只各自一个事务：中途某只失败不影响已经更新好的，异常直接抛给控制层（前端展示 message）。
+     */
+    public int generateAllSeries(Long userId) {
+        Map<String, PlanState> states = seriesService.foldForUser(userId, LocalDate.now());
+        states.keySet().forEach(code -> seriesService.rebuildAndSyncNav(userId, code));
+        log.info("一键更新全部序列完成，userId={}, 资产数={}", userId, states.size());
+        return states.size();
+    }
+
     /** fold 结果 + asset 元数据 + 序列 → 前端契约的 Fund */
     private FundResponse toResponse(PlanState state, Asset asset, List<AssetSeries> rows) {
         List<AssetSeries> series = rows == null ? List.of() : rows;
@@ -117,11 +145,15 @@ public class FundService {
                 ? asset.getName() : state.getCode());
         response.setCategory(asset != null && StringUtils.hasText(asset.getCategory())
                 ? asset.getCategory() : DEFAULT_CATEGORY);
+        // 股基/债基原样透出，不在读侧归一：null 就是「未标注」，前端按股票基金显示（与 AssetService.bucketOf 同口径）
+        response.setAssetType(asset == null ? null : asset.getAssetType());
         response.setActive(state.isActive());
         response.setArchived(isArchived(asset));
         response.setFrequency(state.getFrequency());
         response.setAmount(state.getAmount());
         response.setStartDate(state.startMonth());
+        // 最后更新时间来自 asset 行（SeriesService 每次生成/重算时刷新）；asset 行缺失时为 null
+        response.setLastUpdateTime(asset == null ? null : asset.getLastUpdateTime());
 
         // 本金 / 市值取序列末行：与 asset_series 是同一份数字，不再另算一遍
         AssetSeries last = series.isEmpty() ? state.lastRow() : series.get(series.size() - 1);

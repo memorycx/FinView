@@ -1,0 +1,34 @@
+# 数据流
+
+## asset_series
+
+### asset_series中各个字段含义解释：
+
+- id：主键，自增
+- user_id：用户ID，外键，关联user表
+- code: 资产代码，例如：000001
+- day: 日期，例如：2023-01-01
+- amount: 买入金额，包含手续费
+- fee: 手续费
+- principal: 累计投入的本金
+- total：当日的市值
+
+### 交易类型解释 ---> 服务adjustments：
+
+- 买入：就是当天买入
+- 卖出：就是当天卖出，按照当天结束的市值的基础上卖出
+- 定投下调：当日就下调
+- 停止定投：当日有买入，然后停止
+- 由每日定投变成每周定投：当日仍是每日定投的金额，然后下周一开始变成每周一定投
+
+
+### 服务依赖
+
+SeriesService:
+Backend/src/main/java/com/finview/service/SeriesService.java
+它把 adjustments 事件流按天推进成 asset_series，写库走AssetSeriesMapper(SeriesService.java:150，XML在
+Backend/src/main/resources/mapper/AssetSeriesMapper.xml)。
+
+
+根据上列这些信息，需要将asset_series中添加的daily_income_detail来保存每日收益详情
+然后前端展示时，需要根据daily_income_detail来计算累计收益

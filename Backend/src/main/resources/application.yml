@@ -21,6 +21,14 @@ spring:
       data-locations: classpath:db/data.sql
       encoding: UTF-8
 
+finview:
+  cash:
+    # 现金与基金买卖的联动起点（含当天）：只有这一天起的扣款 / 买入 / 卖出才动现金余额，
+    # 之前的历史不追溯（用户的历史买入没记过现金，补进来余额会凭空少六千多）。
+    # 2026-10-08 = 国庆休市（10/1–10/7）后第一个 A 股交易日，用 resources/python/trade_calendar.py 核对过。
+    # 改完要强制重算一次才生效：登录被 update_series_time 水位挡着，用 POST /api/funds/{任一code}/series。
+    link-from: 2026-10-08
+
 mybatis:
   mapper-locations: classpath:mapper/*.xml
   type-aliases-package: com.finview.entity

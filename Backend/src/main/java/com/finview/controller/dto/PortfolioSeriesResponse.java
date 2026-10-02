@@ -4,6 +4,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -25,8 +26,16 @@ public class PortfolioSeriesResponse {
     /** 组合年化收益率（XIRR），小数：0.08 = 8%；null = 无法计算 */
     private BigDecimal annualizedRate;
 
-    public PortfolioSeriesResponse(List<DayPointResponse> series, BigDecimal annualizedRate) {
+    /**
+     * 组合的「最后更新时间」= 该用户**全部 asset 行**（含已归档与现金）last_update_time 的 MAX，
+     * 口径见 PortfolioService；一条 asset 行都没有时为 null。看板折线图页脚显示它。
+     */
+    private LocalDateTime lastUpdateTime;
+
+    public PortfolioSeriesResponse(List<DayPointResponse> series, BigDecimal annualizedRate,
+                                   LocalDateTime lastUpdateTime) {
         this.series = series;
         this.annualizedRate = annualizedRate;
+        this.lastUpdateTime = lastUpdateTime;
     }
 }

@@ -22,6 +22,16 @@ export function frequencyLabel(freq: InvestFrequency) {
   return { daily: '日投', weekly: '周投', monthly: '月投' }[freq]
 }
 
+/* ==================== 时间格式化 ==================== */
+
+/**
+ * ISO 时间（2026-10-02T14:33:12，后端 asset.last_update_time 的序列化格式）→ 2026-10-02 14:33。
+ * null / 空串返回 null，由调用方显示「—」（还没有 asset 行时用）。
+ */
+export function formatDateTime(iso?: string | null) {
+  return iso ? iso.replace('T', ' ').slice(0, 16) : null
+}
+
 /* ==================== 收益计算 ==================== */
 
 /**

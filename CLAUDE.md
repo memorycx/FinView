@@ -115,3 +115,39 @@ ACT/365，持有不足 30 天或数学上无解返回 null（前端显示「—�
 
 口径改动（费率、周期、交易日规则）**不会自动回填历史**：重算只在登录增量推进、
 增删改调整记录、抓到新净值时发生，所以改完要跑一次重算（或 `POST /api/nav/refresh`）。
+想一次重算全部资产：投资看板组合总览下、定投计划卡片里的「更新全部资产序列」按钮
+= `POST /api/funds/series`（逐只走单只重算那条路，含已归档、不含现金，各自异步补净值）。
+
+**现金**是保留 code `CASH` 的一条普通资产（`common/CashAsset.java`，录入页选「现金」只填日期 + 金额）：
+手工记录复用 adjustments（**正数 = action=3 进账、负数 = action=4 出账**，存绝对值，全库「金额恒正、方向看 action」
+的约定不破），余额 = Σ手工记录 − Σ 起点之后各基金的 (amount + fee)，算式在 `CashLedger`（纯计算，有单测）。
+三条容易踩的：
+- **联动起点** `finview.cash.link-from`（2026-10-08，国庆后第一个交易日）：只有这一天起的扣款/买入/卖出才动现金，
+  **之前的历史一律不补**——用户的历史买入从没记过现金，补进来余额会凭空少六千多。改完要强制重算一次才生效
+  （登录被水位挡着，用 `POST /api/funds/{任一code}/series`）。
+- **只写 asset 一行快照，不写 asset_series**：现金不需要走势图，写行反而会带来 prune / 增量水位 / 空区间清零，
+  还会被组合曲线与 XIRR 当成一只持仓。`AssetService` 取不到序列行时本来就会兜底读 `asset.total`。
+- **不进投资看板**：`foldForUser` 把现金滤掉（`/funds` 系列自动干净），`PortfolioService` 也排除它；
+  但它**计入** `/assets/summary` 的现金桶与「我的资产」页。顺带：`upsertCashSnapshot` 是唯一会把 category
+  写进冲突更新的语句（分类对现金是系统语义，被写成 fund 就回不去了）。
+
+**股基 / 债基（`asset.asset_type`，2026-10-02 加）**：基金的细分类型，`equity` 股票基金 / `bond` 债券基金
+（`cash` 只属于保留 code CASH，由 `upsertCashSnapshot` 系统维护）。`category` 仍是大类 `fund`，要细分就读它：
+- **NULL 一律按股基算**：存量行由 `schema.sql` 启动时回填成 `equity`，新基金行插入即写 `equity`，
+  读侧 `AssetService.bucketOf` 同样兜底——「没标过」和「标成股基」是一回事，没有第三态。
+- 「我的资产」页的资产配置环形图把它拆成 **股票基金 / 债券基金 + 股票 / 债券 / 现金共 5 个展示桶**
+  （`/assets/summary` 的 `allocation`，`[].category` 是桶 key `equityFund`/`bondFund`/…，**不是 `asset.category` 原值**）；
+  **安全资金 = `asset_type ∈ {bond, cash}` 的未归档市值**（同接口的 `safeAssets`），标了债基两处一起生效。
+- 录入接口 `POST/PUT /adjustments` 的 `assetType`（equity/bond）**选填、传了才改**：不传 = 不动已有分类，
+  给一只债基录常规买入不会被前端默认的「股票基金」翻回去（前端只在用户点过类型卡片时才带）。
+  与费率/周期一样，改口径**不会自动回填历史**，要逐只重标。
+- 手工改类型：`UPDATE asset SET asset_type='bond' WHERE code='019851';`
+  （019851 汇添富稳宏6个月持有债券A 是库里唯一的债基，2026-10-02 已标；这条**故意不写进 schema.sql**，
+  否则每次启动都会被强行改回 bond）。
+
+**「最后更新时间」**：`asset.last_update_time`（2026-10-02 加）是折线图页脚显示的值。
+口径：该资产最后一次**生成 / 重算 asset_series** 的时刻，由 `SeriesService` 写 asset 快照时刷成当时时刻
+（登录增量推进、增删改调整记录、抓到新净值后的重算、手动生成序列都会走到；现金没有序列，取最后一次余额快照刷新）。
+存量行由 `schema.sql` 迁移回填成所属用户的 `user.create_time`，新行首次插入即写生成时刻，之后每次生成覆盖。
+单只基金页脚用它自己的值（`FundResponse.lastUpdateTime`）；**组合总览取该用户全部 asset 行（含已归档与现金）的 MAX**
+（`PortfolioService`，与曲线的持仓范围故意不同），前端由 `Dashboard.vue` 二选一传给 `PerformanceChart`。

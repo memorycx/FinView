@@ -36,6 +36,15 @@ public class AdjustmentRequest {
     @Size(max = 100, message = "资产名称长度不能超过 100")
     private String name;
 
+    /**
+     * 基金细分类型：equity 股基 / bond 债基，选填。
+     * 同样不落 adjustments 表：填了才写 asset.asset_type（新建的基金行默认 equity）。
+     * **不填 = 不修改已有分类**（给一只债基录常规买入不会把它翻回股基）；
+     * 现金（code=CASH）带它会像 frequency 一样被归一掉 —— 现金的类型是系统语义。
+     */
+    @Size(max = 16, message = "资产类型长度不能超过 16")
+    private String assetType;
+
     /** 记录日期，JSON 里形如 "2024-01-15" */
     @NotNull(message = "记录日期不能为空")
     private LocalDate date;

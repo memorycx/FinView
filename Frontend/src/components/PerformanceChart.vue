@@ -21,9 +21,10 @@ import {
   Wallet,
 } from '@lucide/vue'
 import Card from '@/components/ui/card/Card.vue'
+import { generateAllFundSeries } from '@/api'
 import { isDark } from '@/composables/useTheme'
 import { MONO_FONT, SANS_FONT, themeColor } from '@/lib/chart-theme'
-import { formatCNY, formatPct, formatWan } from '@/lib/finance'
+import { formatCNY, formatDateTime, formatPct } from '@/lib/finance'
 import type { DayPoint } from '@/api/types'
 
 use([CanvasRenderer, LineChart, GridComponent, TooltipComponent, MarkLineComponent])
@@ -43,7 +44,42 @@ const props = defineProps<{
    * null = 持有不足 30 天或无法计算，显示「—」
    */
   annualizedRate?: number | null
+  /**
+   * 页脚「最后更新时间」（后端 asset.last_update_time，ISO 8601）：单只基金是它自己
+   * 最后一次生成序列的时刻，组合总览是全部资产里最新的一个；null = 还没有 asset 行，显示「—」
+   */
+  lastUpdateTime?: string | null
 }>()
+
+const emit = defineEmits<{
+  /** 序列重算完成，父级重新拉计划列表与组合走势 */
+  generated: []
+}>()
+
+/**
+ * 页脚「最后更新」旁的刷新图标：按调整记录整段重算全部资产的每日序列。
+ * 进行中锁点击、图标旋转；结果/错误在图标前短暂提示，4 秒后自动消失。
+ */
+const refreshing = ref(false)
+const refreshMessage = ref<string | null>(null)
+let refreshTimer: ReturnType<typeof setTimeout> | undefined
+
+async function handleRefreshAll() {
+  if (refreshing.value) return
+  refreshing.value = true
+  refreshMessage.value = null
+  try {
+    const count = await generateAllFundSeries()
+    refreshMessage.value = count > 0 ? `已更新 ${count} 只资产的序列` : '没有可更新的资产'
+    emit('generated')
+  } catch (e) {
+    refreshMessage.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    refreshing.value = false
+    clearTimeout(refreshTimer)
+    refreshTimer = setTimeout(() => (refreshMessage.value = null), 4000)
+  }
+}
 
 const mode = ref<Mode>('value')
 const range = ref<Range>('all')
@@ -90,6 +126,7 @@ onMounted(() => {
 })
 onUnmounted(() => {
   window.removeEventListener('resize', updateOverlays)
+  clearTimeout(refreshTimer)
 })
 
 // 主题切换后等待 .dark class 应用完成，再重算颜色
@@ -112,7 +149,18 @@ watch(isDark, async () => {
 //   { immediate: true, deep: true }
 // )
 
-const last = computed(() => props.series[props.series.length - 1])
+const last = computed<DayPoint | undefined>(() => props.series[props.series.length - 1])
+
+/**
+ * 有没有数据：新用户 / 空看板时 series 为空数组，整个组件必须照常渲染出**框架**，
+ * 只把需要数据的位置换成「—」（模板里统一走 cny / signed / pct 这几个包装）。
+ */
+const hasData = computed(() => !!last.value)
+
+/** 空看板的占位：与年化收益率的 null 占位（—）保持同一套约定 */
+const cny = (n: number) => (hasData.value ? formatCNY(n) : '—')
+const signed = (n: number) => (hasData.value ? signedCNY(n) : '—')
+const pct = (n: number) => (hasData.value ? formatPct(n) : '—')
 
 /** 截至当日的累计手续费：按全量 series 累加（与时间范围筛选无关，否则区间内的收益会漏掉更早的手续费） */
 const feeCumulative = computed(() => {
@@ -127,8 +175,10 @@ const feeCumulative = computed(() => {
 const cumFee = (day: string) => feeCumulative.value.get(day) ?? 0
 
 /** 累计收益 = 市值 − 本金 − 累计手续费（本金是净投入，卖出已冲减，所以跨清仓连续） */
-const lastFee = computed(() => cumFee(last.value.day))
-const totalProfit = computed(() => last.value.total - last.value.principal - lastFee.value)
+const lastFee = computed(() => (last.value ? cumFee(last.value.day) : 0))
+const totalProfit = computed(() =>
+  last.value ? last.value.total - last.value.principal - lastFee.value : 0,
+)
 
 /** 当日的累计投入：后端给 invested；mock 的手写序列没有它，按「本金 + 当日累计手续费」兜底 */
 const investedOn = (p: DayPoint) => p.invested ?? p.principal + cumFee(p.day)
@@ -139,10 +189,20 @@ const investedOn = (p: DayPoint) => p.invested ?? p.principal + cumFee(p.day)
  * （口径见 CLAUDE.md；没清过仓时两个分母相等）
  */
 const rate = computed(() => {
+  if (!last.value) return 0
   const invested = investedOn(last.value)
   return invested === 0 ? 0 : totalProfit.value / invested
 })
 const positive = computed(() => totalProfit.value >= 0)
+
+/** 累计收益 / 收益率的涨跌配色；空看板显示「—」时用灰字，别把占位符染成红绿 */
+const gainStyle = computed(() => ({
+  color: !hasData.value
+    ? 'var(--muted-foreground)'
+    : positive.value
+      ? 'var(--gain)'
+      : 'var(--loss)',
+}))
 
 /**
  * 整段序列的市值都等于本金 = 这只基金还没有抓到过净值（估值兜底为 1）：
@@ -158,7 +218,7 @@ const navPending = computed(
 
 /** 时间范围过滤后的图表数据 */
 const chartSeries = computed(() => {
-  if (range.value === 'all') return props.series
+  if (range.value === 'all' || !last.value) return props.series
   const [ly, lm] = last.value.day.split('-').map(Number)
   const minDay = `${ly - Number(range.value)}-${String(lm).padStart(2, '0')}-01`
   return props.series.filter((p) => p.day >= minDay)
@@ -173,8 +233,55 @@ const profitData = computed(() =>
   })),
 )
 
-/** 汇总统计（始终基于完整区间） */
+/**
+ * 纵坐标单位：按**当前图上实际的金额量级**自动选 元 / 万 / 亿。
+ *
+ * 单位要跟着图上的数走，不能写死：一只几千块的小基金按「万元」画，刻度全是 0.00；
+ * 而上了亿按万元画又会变成 12345.67 这种长数字。收益走势按收益的量级单独判断
+ * （收益通常比市值小两个数量级，跟着市值走会让刻度又变回 0.00）。
+ *
+ * 换算后上百就取整、上十保留一位、更小保留两位，保证刻度短且整根轴位数一致。
+ */
+const unitSteps = [
+  { label: '亿', factor: 1e8 },
+  { label: '万', factor: 1e4 },
+  { label: '元', factor: 1 },
+] as const
+
+const axisUnit = computed(() => {
+  const values =
+    mode.value === 'value'
+      ? chartSeries.value.flatMap((p) => [p.total, p.principal])
+      : profitData.value.map((p) => p.profit)
+  const peak = values.reduce((max, v) => Math.max(max, Math.abs(v)), 0)
+
+  const step = unitSteps.find((s) => peak >= s.factor) ?? unitSteps[unitSteps.length - 1]
+  const scaled = peak / step.factor
+  return { ...step, digits: scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2 }
+})
+
+/** 纵轴刻度：换算到当前单位，按 unit.digits 固定小数位（不带单位后缀，单位写在轴名里） */
+function formatAxisValue(v: number, unit: { factor: number; digits: number }) {
+  return (v / unit.factor).toLocaleString('zh-CN', {
+    minimumFractionDigits: unit.digits,
+    maximumFractionDigits: unit.digits,
+  })
+}
+
+/** 汇总统计（始终基于完整区间）；空看板时全是占位值，由模板的 cny / signed / pct / duration 转成「—」 */
 const stats = computed(() => {
+  if (!last.value) {
+    return {
+      startLabel: '—',
+      startShort: '—',
+      years: 0,
+      remMonths: 0,
+      principal: 0,
+      total: 0,
+      profit: 0,
+      rate: 0,
+    }
+  }
   const startRaw = props.startDate ?? props.series[0].day
   const startDay = startRaw.length === 7 ? `${startRaw}-01` : startRaw
   const [sy, sm] = startDay.split('-').map(Number)
@@ -193,6 +300,11 @@ const stats = computed(() => {
     rate: rate.value,
   }
 })
+
+/** 已投资时长文案；空看板显示「—」（0年0个月 会看起来像真有数据） */
+const durationLabel = computed(() =>
+  hasData.value ? `${stats.value.years}年${stats.value.remMonths}个月` : '—',
+)
 
 function toggleMode() {
   mode.value = mode.value === 'value' ? 'profit' : 'value'
@@ -307,7 +419,8 @@ const days = chartSeries.value.map((p) => p.day)
     yAxis: {
       type: 'value' as const,
       scale: true,
-      name: '金额（万元）',
+      // 单位随量级自适应，见 axisUnit；收益走势单独标「收益」
+      name: `${mode.value === 'value' ? '金额' : '收益'}（${axisUnit.value.label}）`,
       nameTextStyle: {
         color: axisLabelColor,
         fontSize: 14,
@@ -323,7 +436,7 @@ const days = chartSeries.value.map((p) => p.day)
         fontFamily: MONO_FONT,
         fontSize: 14,
         fontWeight: 500,
-        formatter: (v: number) => formatWan(v),
+        formatter: (v: number) => formatAxisValue(v, axisUnit.value),
       },
     },
   }
@@ -467,25 +580,25 @@ const days = chartSeries.value.map((p) => p.day)
           <div class="space-y-1 sm:pr-8">
             <p class="text-xs font-medium text-muted-foreground">当前总持仓</p>
             <p class="font-mono text-4xl font-bold leading-tight tracking-tight tabular-nums text-foreground">
-              {{ formatCNY(stats.total) }}
+              {{ cny(stats.total) }}
             </p>
             <p class="text-xs text-muted-foreground">
-              本金 {{ formatCNY(stats.principal) }} · 手续费 {{ formatCNY(lastFee) }}
+              本金 {{ cny(stats.principal) }} · 手续费 {{ cny(lastFee) }}
             </p>
           </div>
           <div class="space-y-1 sm:px-8">
             <p class="text-xs font-medium text-muted-foreground">累计收益</p>
             <p
               class="font-mono text-4xl font-bold leading-tight tracking-tight tabular-nums"
-              :style="{ color: positive ? 'var(--gain)' : 'var(--loss)' }"
+              :style="gainStyle"
             >
-              {{ signedCNY(stats.profit) }}
+              {{ signed(stats.profit) }}
             </p>
             <p
               class="flex items-center gap-1 text-xs font-semibold"
-              :style="{ color: positive ? 'var(--gain)' : 'var(--loss)' }"
+              :style="gainStyle"
             >
-              {{ formatPct(stats.rate) }}
+              {{ pct(stats.rate) }}
               <Info class="size-3.5 opacity-70" />
             </p>
           </div>
@@ -596,7 +709,7 @@ const days = chartSeries.value.map((p) => p.day)
       <div
         role="button"
         aria-label="点击切换图表视图"
-        class="mt-2 block min-h-[380px] w-full flex-1 cursor-pointer lg:min-h-[240px]"
+        class="relative mt-2 block min-h-[380px] w-full flex-1 cursor-pointer lg:min-h-[240px]"
         @click="toggleMode"
       >
         <VChart
@@ -605,6 +718,13 @@ const days = chartSeries.value.map((p) => p.day)
           autoresize
           :update-options="{ notMerge: true }"
         />
+        <!-- 空看板：坐标轴框架留着，中间给一句「暂无数据」，别让空网格看起来像加载失败 -->
+        <p
+          v-if="!hasData"
+          class="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-muted-foreground"
+        >
+          暂无数据
+        </p>
       </div>
 
       <!-- 底部统计条 -->
@@ -625,7 +745,7 @@ const days = chartSeries.value.map((p) => p.day)
           <div class="min-w-0">
             <p class="text-xs text-muted-foreground">已投资时长</p>
             <p class="mt-0.5 font-mono text-base font-semibold tabular-nums">
-              {{ stats.years }}年{{ stats.remMonths }}个月
+              {{ durationLabel }}
             </p>
           </div>
         </div>
@@ -634,7 +754,7 @@ const days = chartSeries.value.map((p) => p.day)
           <div class="min-w-0">
             <p class="text-xs text-muted-foreground">累计投入本金</p>
             <p class="mt-0.5 font-mono text-base font-semibold tabular-nums">
-              {{ formatCNY(stats.principal) }}
+              {{ cny(stats.principal) }}
             </p>
           </div>
         </div>
@@ -643,7 +763,7 @@ const days = chartSeries.value.map((p) => p.day)
           <div class="min-w-0">
             <p class="text-xs text-muted-foreground">当前总持仓</p>
             <p class="mt-0.5 font-mono text-base font-semibold tabular-nums">
-              {{ formatCNY(stats.total) }}
+              {{ cny(stats.total) }}
             </p>
           </div>
         </div>
@@ -653,9 +773,9 @@ const days = chartSeries.value.map((p) => p.day)
             <p class="text-xs text-muted-foreground">累计收益</p>
             <p
               class="mt-0.5 font-mono text-sm font-semibold tabular-nums"
-              :style="{ color: positive ? 'var(--gain)' : 'var(--loss)' }"
+              :style="gainStyle"
             >
-              {{ signedCNY(stats.profit) }}
+              {{ signed(stats.profit) }}
             </p>
           </div>
         </div>
@@ -665,9 +785,9 @@ const days = chartSeries.value.map((p) => p.day)
             <p class="text-xs text-muted-foreground">收益率</p>
             <p
               class="mt-0.5 font-mono text-sm font-semibold tabular-nums"
-              :style="{ color: positive ? 'var(--gain)' : 'var(--loss)' }"
+              :style="gainStyle"
             >
-              {{ formatPct(stats.rate) }}
+              {{ pct(stats.rate) }}
             </p>
           </div>
         </div>
@@ -678,10 +798,27 @@ const days = chartSeries.value.map((p) => p.day)
         class="mt-3 flex shrink-0 flex-wrap items-center justify-between gap-2 pb-1 text-xs text-muted-foreground"
       >
         <p>注：数据为历史持仓估算值，仅供参考，不构成投资建议。</p>
-        <p class="flex items-center gap-1.5">
-          最后更新：2025-01-01 10:24
-          <RefreshCw class="size-3.5" />
-        </p>
+        <div class="flex items-center gap-2">
+          <p v-if="refreshMessage" class="text-brand">
+            {{ refreshMessage }}
+          </p>
+          <p class="flex items-center gap-1.5">
+            最后更新：{{ formatDateTime(lastUpdateTime) ?? '—' }}
+            <button
+              type="button"
+              class="inline-flex items-center rounded transition-colors hover:text-foreground disabled:opacity-50"
+              :disabled="refreshing"
+              :title="
+                refreshMessage
+                  ?? '按调整记录整段重算全部资产的每日序列（asset_series），净值在后台异步补'
+              "
+              :aria-label="refreshMessage ?? '更新全部资产序列'"
+              @click="handleRefreshAll"
+            >
+              <RefreshCw class="size-3.5" :class="refreshing && 'animate-spin'" />
+            </button>
+          </p>
+        </div>
       </div>
       </div>
     </Card>

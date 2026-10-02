@@ -12,6 +12,7 @@ import Card from '@/components/ui/card/Card.vue'
 import CardHeader from '@/components/ui/card/CardHeader.vue'
 import CardContent from '@/components/ui/card/CardContent.vue'
 import Button from '@/components/ui/Button.vue'
+import PageFooter from '@/components/PageFooter.vue'
 import { isDark } from '@/composables/useTheme'
 import { useRequest } from '@/composables/useApi'
 import { getSavingsPlan } from '@/api'
@@ -137,15 +138,17 @@ function pctOf(amount: number, total: number) {
 </script>
 
 <template>
-  <!-- 加载中 -->
-  <div
-    v-if="loading"
-    class="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-sm text-muted-foreground"
-  >
-    数据加载中…
-  </div>
+  <!-- min-h-screen + flex-col：三种状态（加载中 / 详情 / 未找到）都把脚注压在界面底部 -->
+  <div class="flex min-h-screen flex-col px-4 pt-6 pb-[18px] sm:px-10 lg:pt-4">
+    <!-- 加载中 -->
+    <div
+      v-if="loading"
+      class="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground"
+    >
+      数据加载中…
+    </div>
 
-  <div v-else-if="plan" class="mx-auto w-full max-w-[1400px] px-4 pt-6 pb-[18px] sm:px-10 lg:pt-4">
+    <div v-else-if="plan" class="mx-auto flex w-full max-w-[1400px] flex-1 flex-col">
     <!-- 占位：对齐返回按钮区 -->
     <div class="mb-4 shrink-0 lg:mb-3 flex items-center gap-3" aria-hidden="true">
       <div class="h-7 invisible">&nbsp;</div>
@@ -447,12 +450,14 @@ function pctOf(amount: number, total: number) {
         </Card>
       </div>
     </div>
-  </div>
 
-  <!-- 未找到 -->
-  <div v-else class="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-center">
-    <p class="text-lg font-bold">未找到该存钱计划</p>
-    <p class="text-sm text-muted-foreground">该计划可能已被删除或 ID 不正确</p>
-    <Button @click="goBack">返回列表</Button>
+    <!-- 未找到 -->
+    <div v-else class="flex flex-1 flex-col items-center justify-center gap-3 text-center">
+      <p class="text-lg font-bold">未找到该存钱计划</p>
+      <p class="text-sm text-muted-foreground">该计划可能已被删除或 ID 不正确</p>
+      <Button @click="goBack">返回列表</Button>
+    </div>
+
+    <PageFooter />
   </div>
 </template>

@@ -127,14 +127,15 @@ CREATE TABLE IF NOT EXISTS `saving_plans` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='储蓄计划表';
 
 -- ============================== 5. asset 资产主表 ==============================
--- active / frequency / startDate / principal / total 五列是 fold 出来的快照（SeriesService 维护），
+-- active / frequency / startDate / principal / total / last_update_time 是 fold 出来的快照（SeriesService 维护），
 -- name / category / plan_id / industry / region / currency / archived / market 是用户维护的元数据，fold 不覆盖。
 CREATE TABLE IF NOT EXISTS `asset` (
                          `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
                          `user_id` BIGINT NOT NULL COMMENT '用户id',
                          `name` VARCHAR(100) NOT NULL COMMENT '资产名称',
                          `code` VARCHAR(64) NOT NULL COMMENT '资产编码',
-                         `category` VARCHAR(64) DEFAULT NULL COMMENT '资产分类：fund/stock/bond/cash',
+                         `category` VARCHAR(64) DEFAULT NULL COMMENT '资产分类：fund/stock/bond/cash；fund 的股基/债基细分看 asset_type',
+                         `asset_type` VARCHAR(16) DEFAULT NULL COMMENT '资产类型：equity 股基 / bond 债基 / cash 现金（仅 CASH 行，系统维护）；基金行只写 equity/bond，NULL 按 equity 算（安全资金统计按 bond+cash 计）',
                          `active` TINYINT DEFAULT 1 COMMENT '定投是否进行中 1是0否',
                          `archived` TINYINT NOT NULL DEFAULT 0 COMMENT '是否归档 1是0否（用户维护的元数据，fold 不覆盖）',
                          `frequency` VARCHAR(64) DEFAULT NULL COMMENT '当前定投频率',
@@ -147,6 +148,7 @@ CREATE TABLE IF NOT EXISTS `asset` (
                          `region` VARCHAR(64) DEFAULT NULL COMMENT '区域标签，供 /assets/distribution 使用',
                          `currency` VARCHAR(64) DEFAULT NULL COMMENT '币种标签，供 /assets/distribution 使用',
                          `market` VARCHAR(16) DEFAULT NULL COMMENT '标的市场：us / hk；NULL = 只看 A 股日历（A 股基金）',
+                         `last_update_time` DATETIME DEFAULT NULL COMMENT '最后更新时间：最后一次生成/重算 asset_series 的时刻（现金为最后一次余额快照刷新）',
                          FOREIGN KEY (`user_id`) REFERENCES `user`(`id`),
                          UNIQUE KEY idx_user_code (`user_id`, `code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='资产表';
@@ -201,11 +203,70 @@ PREPARE migrate_asset FROM @ddl;
 EXECUTE migrate_asset;
 DEALLOCATE PREPARE migrate_asset;
 
+-- asset_type：资产类型（2026-10-02 加，用户维护的元数据、fold 不覆盖）。
+-- 基金行：equity 股基 / bond 债基（录入界面可选，见 AdjustmentRequest.assetType）；CASH 行：cash（系统维护）。
+-- NULL = 未标注，按股基算（下面回填成 equity）；「安全资金占比」（我的资产页）按 bond + cash 的市值 / 总资产算，
+-- 见 AssetService.summary。
+SET @has_asset_type = (SELECT COUNT(*) FROM information_schema.COLUMNS
+                       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset'
+                         AND COLUMN_NAME = 'asset_type');
+SET @ddl = IF(@has_asset_type = 0,
+              'ALTER TABLE `asset` ADD COLUMN `asset_type` VARCHAR(16) DEFAULT NULL COMMENT ''资产类型：equity 股基 / bond 债基 / cash 现金（仅 CASH 行，系统维护）；基金行只写 equity/bond，NULL 按 equity 算（安全资金统计按 bond+cash 计）'' AFTER `category`',
+              'DO 0');
+PREPARE migrate_asset FROM @ddl;
+EXECUTE migrate_asset;
+DEALLOCATE PREPARE migrate_asset;
+
+-- 存量行回填：现金是唯一能机械判定的一类（保留 code CASH / category=cash），先标上。
+UPDATE `asset`
+SET asset_type = 'cash'
+WHERE asset_type IS NULL
+  AND (code = 'CASH' OR category = 'cash');
+
+-- 存量基金一律回填成股票基金（2026-10-02 用户约定：细分先默认 equity，债基逐只在录入时改）。
+-- **顺序在现金回填之后**：万一有手工写成 category='fund' 的 CASH 行，先被上面那句认领走。
+-- 只填 NULL、可重复执行：手工标过的 bond 不会被覆盖。
+-- 唯一的债基 019851 汇添富稳宏6个月持有债券A 是 2026-10-02 用一次性 UPDATE 标的
+-- （「UPDATE asset SET asset_type='bond' WHERE code='019851'」）——**故意不写进本文件**：
+-- 写进来就每次启动都把它强行改回 bond，用户以后自己改不动。
+UPDATE `asset`
+SET asset_type = 'equity'
+WHERE asset_type IS NULL
+  AND category = 'fund';
+
+-- last_update_time：最后更新时间（2026-10-02 加）。每生成 / 重算一次该资产的 asset_series，
+-- SeriesService 就把这里刷成当时时刻（现金没有序列，取最后一次余额快照刷新的时刻）；
+-- 折线图页脚的「最后更新」用它，组合总览取该用户全部 asset 行的 MAX。
+SET @has_last_update_time = (SELECT COUNT(*) FROM information_schema.COLUMNS
+                             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset'
+                               AND COLUMN_NAME = 'last_update_time');
+SET @ddl = IF(@has_last_update_time = 0,
+              'ALTER TABLE `asset` ADD COLUMN `last_update_time` DATETIME DEFAULT NULL COMMENT ''最后更新时间：最后一次生成/重算 asset_series 的时刻（现金为最后一次余额快照刷新）'' AFTER `market`',
+              'DO 0');
+PREPARE migrate_asset FROM @ddl;
+EXECUTE migrate_asset;
+DEALLOCATE PREPARE migrate_asset;
+
+-- 存量行的初始值回填 = 所属用户的账号创建时间（user.create_time），只填 NULL、可重复执行；
+-- 之后每次生成 series 都会被 SeriesService 覆盖成当时时刻，新行由 upsert 直接写入不会留 NULL。
+UPDATE `asset` a
+    JOIN `user` u ON a.user_id = u.id
+SET a.last_update_time = u.create_time
+WHERE a.last_update_time IS NULL;
+
 -- 老库把 principal / total 的列注释写反了（「当前净值」/「当前总投入金额」），这里纠正成真实语义。
 -- 类型保持原样，只改注释，可重复执行。
 SET @ddl = 'ALTER TABLE `asset`
     MODIFY COLUMN `principal` DECIMAL(18,4) NOT NULL COMMENT ''累计投入本金（快照）'',
     MODIFY COLUMN `total` DECIMAL(18,4) NOT NULL COMMENT ''当前市值 = 份额 × 最新净值（快照）''';
+PREPARE migrate_asset FROM @ddl;
+EXECUTE migrate_asset;
+DEALLOCATE PREPARE migrate_asset;
+
+-- asset_type 的列注释同步成新语义：列已经存在时上面的 ADD COLUMN 分支不会再执行，注释得单独纠正。
+-- 同样只改注释、类型原样，可重复执行。
+SET @ddl = 'ALTER TABLE `asset`
+    MODIFY COLUMN `asset_type` VARCHAR(16) DEFAULT NULL COMMENT ''资产类型：equity 股基 / bond 债基 / cash 现金（仅 CASH 行，系统维护）；基金行只写 equity/bond，NULL 按 equity 算（安全资金统计按 bond+cash 计）''';
 PREPARE migrate_asset FROM @ddl;
 EXECUTE migrate_asset;
 DEALLOCATE PREPARE migrate_asset;

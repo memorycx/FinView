@@ -1,5 +1,6 @@
 package com.finview.service;
 
+import com.finview.common.CashAsset;
 import com.finview.controller.dto.PlanAdjustmentResponse;
 import com.finview.entity.Adjustment;
 import com.finview.entity.Asset;
@@ -15,6 +16,7 @@ import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -95,6 +97,10 @@ import java.util.stream.Collectors;
  *   同一天清仓后又买入（当天的定投）算新一轮的第一笔。
  * - 序列仍然**每个自然日一行**，非交易日 amount 为 0；这样 Σamount == 末行 principal 的对账
  *   不变式、以及增量推进按天推进的逻辑都不用动（清仓当天也一样：amount 记真实到账金额）。
+ * - **最后更新时间**：写 asset 快照时把 `asset.last_update_time` 刷成当时时刻（登录推进、增删改调整记录、
+ *   抓到新净值后的重算、手动生成序列都会走到；现金没有序列，取最后一次余额快照刷新的时刻）。
+ *   折线图页脚的「最后更新」读它，组合总览取该用户**全部 asset 行**（含已归档与现金）的 MAX；
+ *   存量行由 schema.sql 回填成所属用户的 user.create_time。
  *
  * 写入策略：登录走 {@link #advance}（只补 last_update 之后的新行，首次等于全量）；
  * 调整记录被增删改、或新净值到达时走 {@link #rebuild}（整段重算），
@@ -128,6 +134,9 @@ public class SeriesService {
     /** asset 表缺行时的兜底分类 */
     private static final String DEFAULT_CATEGORY = "fund";
 
+    /** 新建基金行的默认类型：股票基金（equity）。用户的选择走 AdjustmentService.updateAssetType，fold 不覆盖 */
+    private static final String DEFAULT_ASSET_TYPE = "equity";
+
     /** 份额的中间精度：只有市值是给前端看的，份额多留几位避免累计误差 */
     private static final int SHARE_SCALE = 8;
 
@@ -157,6 +166,17 @@ public class SeriesService {
     /** 补净值要起 python 进程、走外部接口，绝不能挡在登录响应里，见 AsyncConfig */
     @Qualifier("navRefreshExecutor")
     private final Executor navRefreshExecutor;
+
+    /**
+     * 现金与基金买卖的联动起点（含当天，口径见 {@link CashLedger}）：只有这一天及以后的
+     * 扣款 / 买入 / 卖出才动现金余额，之前的历史不追溯 —— 用户的历史买入从来没记过现金，
+     * 补进来余额会凭空少六千多（2026-10-01 约定）。
+     * 2026-10-08 = 国庆休市（10/1–10/7）后第一个 A 股交易日，用 python/trade_calendar.py 核对过。
+     *
+     * 非 final 字段，Lombok 不会把它收进构造器，所以这里是字段注入（为它加配置注解不值得）。
+     */
+    @Value("${finview.cash.link-from:2026-10-08}")
+    private LocalDate cashLinkFrom;
 
     /* ==================== 对外入口 ==================== */
 
@@ -189,6 +209,8 @@ public class SeriesService {
             // 净值是外部的，异步补；补到了会再回调 rebuild 把历史市值按真实净值重估
             refreshNavAsync(userId, state.getCode(), state.getStartDate());
         }
+        // 复用刚 fold 出来的基金状态刷现金余额，不再折叠第二次
+        syncCashAsset(userId, states, today);
         userMapper.touchUpdateSeriesTime(userId, LocalDateTime.now());
         log.info("推进 asset_series 完成，userId={}, code 数={}, 水位={} → {}", userId, states.size(), lastSync, today);
     }
@@ -232,22 +254,86 @@ public class SeriesService {
         tradingCalendarService.ensureLoaded();
 
         String normalizedCode = code.trim();
-        List<Adjustment> events = adjustmentMapper.findByUser(userId, normalizedCode, null, null, null);
-        if (events.isEmpty()) {
-            // 记录被删光了：序列跟着清空，asset 行留着（name / category 是用户改过的）
-            int removed = assetSeriesMapper.deleteByUserAndCode(userId, normalizedCode);
-            log.info("调整记录已清空，删除序列行 {} 条，userId={}, code={}", removed, userId, normalizedCode);
+        LocalDate today = LocalDate.now();
+
+        // 现金没有净值、没有周期扣款，也不写 asset_series：只有 asset 表的一条余额快照
+        if (CashAsset.isCash(normalizedCode)) {
+            syncCashAsset(userId, foldForUser(userId, today), today);
             return null;
         }
 
-        String market = loadMarkets(userId).get(normalizedCode);
-        PlanState state = buildSeries(userId, normalizedCode, events, loadNav(normalizedCode),
-                loadRates(userId).get(normalizedCode),
-                day -> tradingCalendarService.isTradingDay(day, market), LocalDate.now());
+        LocalDate since = rebuildFundSeries(userId, normalizedCode, today);
+        // 现金要在**每个出口**刷新：删掉一只基金的最后一条记录时它没有序列了，
+        // 但历史上扣掉的钱必须从现金里退回来，漏了这段余额就会永远偏低
+        syncCashAsset(userId, foldForUser(userId, today), today);
+        return since;
+    }
+
+    /**
+     * 单个基金 code 的整段重算（现金不走这里，见 {@link #regenerate}）。
+     *
+     * @return 该 code 最早一条调整记录的日期（净值只抓这之后的部分），没有记录时返回 null
+     */
+    private LocalDate rebuildFundSeries(Long userId, String code, LocalDate today) {
+        List<Adjustment> events = adjustmentMapper.findByUser(userId, code, null, null, null);
+        if (events.isEmpty()) {
+            // 记录被删光了：序列跟着清空，asset 行留着（name / category 是用户改过的）
+            int removed = assetSeriesMapper.deleteByUserAndCode(userId, code);
+            log.info("调整记录已清空，删除序列行 {} 条，userId={}, code={}", removed, userId, code);
+            return null;
+        }
+
+        String market = loadMarkets(userId).get(code);
+        PlanState state = buildSeries(userId, code, events, loadNav(code),
+                loadRates(userId).get(code),
+                day -> tradingCalendarService.isTradingDay(day, market), today);
         writeRows(userId, state, null);
+        pruneOutsideRange(userId, code, state);
         log.info("重建序列，userId={}, code={}, 行数={}, 本金={}",
-                userId, normalizedCode, state.getRows().size(), state.principal);
+                userId, code, state.getRows().size(), state.principal);
         return state.getStartDate();
+    }
+
+    /**
+     * 刷新现金资产的余额快照（{@link CashAsset}），**不写 asset_series** ——
+     * 现金没有走势图需求，而一旦写行就要面对 prune、增量水位、空区间清零，
+     * 还会被组合曲线和 XIRR 当成一只持仓。只写 asset 一行：
+     * AssetService 取不到序列行时会兜底读 asset.total，总资产与分布照常显示。
+     *
+     * 只在两处调用：登录推进（{@link #advance}）与整段重算（{@link #regenerate}）——
+     * 任何一只基金的扣款 / 买入 / 卖出 / 删记录都会动现金。
+     *
+     * 防御式实现：advance 跑在事务里、调用方（AuthService）只记日志不抛，
+     * 这里漏一个空指针会把整段基金推进一起回滚，所以宁可不写也不能炸。
+     */
+    private void syncCashAsset(Long userId, Map<String, PlanState> fundStates, LocalDate today) {
+        List<Adjustment> cashEvents = adjustmentMapper.findByUser(userId, null, null, null, null).stream()
+                .filter(event -> CashAsset.isCash(event.getCode()))
+                .toList();
+        boolean assetExists = assetMapper.findByUser(userId).stream()
+                .anyMatch(asset -> CashAsset.isCash(asset.getCode()));
+        // 从没用过现金的人不该凭空多出一只资产（记录被删光但资产行还在时仍要刷新，写成 0）
+        if (cashEvents.isEmpty() && !assetExists) {
+            return;
+        }
+
+        BigDecimal balance = CashLedger.balance(cashEvents, fundStates, cashLinkFrom, today);
+
+        Asset asset = new Asset();
+        asset.setUserId(userId);
+        asset.setCode(CashAsset.CODE);
+        asset.setName(CashAsset.NAME);
+        asset.setCategory(CashAsset.CATEGORY);
+        // 类型同样是系统语义（安全资金统计按 bond + cash 计），每次刷新都照写
+        asset.setAssetType(CashAsset.ASSET_TYPE);
+        asset.setActive(false);
+        asset.setStartDate(CashLedger.startDate(cashEvents));
+        asset.setPrincipal(balance);
+        asset.setTotal(balance);
+        // 现金没有 asset_series，「最后更新时间」取最后一次余额快照刷新的时刻（口径见 Asset.lastUpdateTime）
+        asset.setLastUpdateTime(LocalDateTime.now());
+        assetMapper.upsertCashSnapshot(asset);
+        log.info("刷新现金快照，userId={}, 余额={}, 联动起点={}", userId, balance, cashLinkFrom);
     }
 
     /**
@@ -272,7 +358,12 @@ public class SeriesService {
      * FundService 用它拿计划状态与时间线，AssetService / PortfolioService 用它判断哪些 code 还在定投。
      */
     public Map<String, PlanState> foldForUser(Long userId, LocalDate today) {
-        List<Adjustment> events = adjustmentMapper.findByUser(userId, null, null, null, null);
+        // 现金不进 fold：它的 action=3/4 是「进账 / 出账」，不是买入卖出。混进来的话
+        // /funds 会多一只永远没有走势的假计划、组合曲线会把现金和基金流出对冲掉（XIRR 现金流打平）、
+        // 每次登录还会给 CASH 抓一次永远抓不到的净值。余额另由 syncCashAsset 单独刷。
+        List<Adjustment> events = adjustmentMapper.findByUser(userId, null, null, null, null).stream()
+                .filter(event -> !CashAsset.isCash(event.getCode()))
+                .toList();
         if (events.isEmpty()) {
             return Map.of();
         }
@@ -635,21 +726,52 @@ public class SeriesService {
     }
 
     /**
-     * 刷新 asset 表的快照列。name / category 等元数据由用户维护，upsertSnapshot 不会覆盖。
+     * 清掉本次重算区间之外的老行。
+     *
+     * 整段重算是 upsert，只覆盖它写到的那些天（[首个事件, today]，逐日连续）；
+     * 序列起点一旦后移 —— 删掉最早一条调整记录、或把最早那条的日期改晚 —— 起点之前的老行
+     * 没有任何人再去写它们，就会永远留在库里，走势图凭空多出一段「记录已经不存在」的历史
+     * （2026-10-01 实测：删掉 6-01 那条后，6 月的 30 行仍在，本金还停在上一次的 1000）。
+     *
+     * 顺序是**先写新行、再删旧行**：中途失败最多多留一天脏数据，不会把好数据删没了；
+     * 重算出空序列（事件全在未来之类）时整段清掉，与「一条记录都没有」同样处理。
+     */
+    private void pruneOutsideRange(Long userId, String code, PlanState state) {
+        List<AssetSeries> rows = state.getRows();
+        if (rows.isEmpty()) {
+            int removed = assetSeriesMapper.deleteByUserAndCode(userId, code);
+            log.info("重算结果为空序列，清掉旧行 {} 条，userId={}, code={}", removed, userId, code);
+            return;
+        }
+        int removed = assetSeriesMapper.deleteOutsideRange(userId, code,
+                rows.get(0).getDay(), rows.get(rows.size() - 1).getDay());
+        if (removed > 0) {
+            log.info("清掉重算区间外的残留行 {} 条，userId={}, code={}, 区间={} ~ {}",
+                    removed, userId, code, rows.get(0).getDay(), rows.get(rows.size() - 1).getDay());
+        }
+    }
+
+    /**
+     * 刷新 asset 表的快照列。name / category / asset_type 等元数据由用户维护，upsertSnapshot 不会覆盖。
+     *
+     * 顺手把 last_update_time 刷成「现在」：能走到这里就说明这个 code 刚生成 / 重算过一次序列，
+     * 折线图页脚的「最后更新」直接读它（新插入的行也走同一条 upsert，初始值就是首次生成时刻）。
      */
     private void upsertAssetSnapshot(Long userId, PlanState state) {
         AssetSeries last = state.lastRow();
         Asset asset = new Asset();
         asset.setUserId(userId);
         asset.setCode(state.getCode());
-        // 只在首次插入时落库：库里已有名字的话，upsertSnapshot 刻意不更新这两列
+        // 只在首次插入时落库：库里已有名字 / 类型的话，upsertSnapshot 刻意不更新这三列
         asset.setName(state.getCode());
         asset.setCategory(DEFAULT_CATEGORY);
+        asset.setAssetType(DEFAULT_ASSET_TYPE);
         asset.setActive(state.isActive());
         asset.setFrequency(state.getFrequency());
         asset.setStartDate(state.getStartDate());
         asset.setPrincipal(last.getPrincipal());
         asset.setTotal(last.getTotal());
+        asset.setLastUpdateTime(LocalDateTime.now());
         assetMapper.upsertSnapshot(asset);
     }
 
@@ -675,6 +797,8 @@ public class SeriesService {
         List<Adjustment> events = adjustmentMapper.findByUser(userId, null, null, null, null);
         Set<String> codes = events.stream()
                 .map(Adjustment::getCode)
+                // 现金没有净值数据源，补抓只会每次登录都白起一个 python 进程
+                .filter(code -> !CashAsset.isCash(code))
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         for (String code : codes) {
             if (navTrendMapper.findMaxDayByCode(code) != null) {
