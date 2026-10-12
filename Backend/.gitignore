@@ -1,0 +1,31 @@
+# Maven编译输出（最重要，target文件夹）
+target/
+
+# Maven wrapper
+.mvn/wrapper/maven-wrapper.jar
+
+# IDEA编辑器文件
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# 日志文件
+logs/
+*.log
+
+# 本地数据文件（csv文件夹，测试数据）
+csv/
+*.txt
+*.json
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.bak
+
+# 本地笔记文档（可选，看你需求，不想上传就放开下面两行）
+tem/

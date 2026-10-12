@@ -1,0 +1,47 @@
+server:
+  port: 8080
+  servlet:
+    # 前端 Base URL 默认为 /api，统一在此加前缀
+    context-path: /api
+
+spring:
+  application:
+    name: finview-backend
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/finview?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
+    username: root
+    password: cx050416
+  sql:
+    init:
+      # 每次启动都执行 schema.sql（幂等建表 + 迁移）与 data.sql（幂等种子）。
+      # 数据源是 MySQL 而非内嵌库，所以这里必须是 always，写 embedded 等于不执行。
+      mode: always
+      schema-locations: classpath:db/schema.sql
+      data-locations: classpath:db/data.sql
+      encoding: UTF-8
+
+finview:
+  cash:
+    # 现金与基金买卖的联动起点（含当天）：只有这一天起的扣款 / 买入 / 卖出才动现金余额，
+    # 之前的历史不追溯（用户的历史买入没记过现金，补进来余额会凭空少六千多）。
+    # 2026-10-08 = 国庆休市（10/1–10/7）后第一个 A 股交易日，用 resources/python/trade_calendar.py 核对过。
+    # 改完要强制重算一次才生效：登录被 update_series_time 水位挡着，用 POST /api/funds/{任一code}/series。
+    link-from: 2026-10-08
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.finview.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    default-fetch-size: 100
+    default-statement-timeout: 30
+
+# JWT 配置（密钥通过环境变量注入，生产环境务必设置足够长度的 secret）
+jwt:
+  secret: ${JWT_SECRET:finview-default-jwt-secret-key-please-change-in-production-2024-minimum-256-bits-long}
+  expiration-ms: 86400000  # 24 小时
+
+logging:
+  level:
+    com.finview: info

@@ -1,0 +1,33 @@
+# 依赖包
+node_modules/
+
+# 构建输出目录
+dist/
+.next/
+
+# 环境变量（重点！里面可能放接口地址、密钥）
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 编辑器/系统文件
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 日志
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 缓存
+.npm
+.eslintcache
+
+

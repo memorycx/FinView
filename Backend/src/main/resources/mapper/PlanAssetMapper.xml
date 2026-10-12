@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.finview.mapper.PlanAssetMapper">
+
+    <!-- 按资产 code 排序：SavingsService.toAssets 的配色是按顺序轮转的，
+         顺序不稳的话每次刷新颜色都在跳 -->
+    <select id="findAssetIdsByPlan" resultType="long">
+        SELECT pa.asset_id
+        FROM `plan_asset` pa
+                 JOIN `asset` a ON a.id = pa.asset_id
+        WHERE pa.user_id = #{userId}
+          AND pa.plan_id = #{planId}
+        ORDER BY a.code
+    </select>
+
+    <!-- INSERT IGNORE：撞上 uk_plan_asset 就静默跳过（重复关联 = 无操作），
+         user_id 由调用方校验过归属后传入 -->
+    <insert id="insert">
+        INSERT IGNORE INTO `plan_asset` (user_id, plan_id, asset_id)
+        VALUES (#{userId}, #{planId}, #{assetId})
+    </insert>
+
+    <delete id="delete">
+        DELETE
+        FROM `plan_asset`
+        WHERE user_id = #{userId}
+          AND plan_id = #{planId}
+          AND asset_id = #{assetId}
+    </delete>
+
+</mapper>

@@ -1,0 +1,428 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue'
+import type { Component } from 'vue'
+import { useRouter } from 'vue-router'
+import { ArrowLeft, Check, Heart, Loader2, Plus, Shield, Target, Wallet } from '@lucide/vue'
+import Card from '@/components/ui/card/Card.vue'
+import Button from '@/components/ui/Button.vue'
+import PageFooter from '@/components/PageFooter.vue'
+import { useRequest } from '@/composables/useApi'
+import { createSavingsPlan, getNewPlanCandidates, getSavingsPlans } from '@/api'
+import { formatCNY } from '@/lib/finance'
+import type { SavingsPlanPayload, SavingsPlanType } from '@/api/types'
+
+/**
+ * 新建存钱计划（路由 /savings/new）。
+ *
+ * 原来列表页的两个入口都指向 /savings/new，但那条路径命中的是详情页、后端按「不存在」返回 404，
+ * 所以点「新建计划」只会看到「未找到该存钱计划」—— 这个页面就是把那条链路补上。
+ *
+ * 两条与后端一致的规则（表单先拦一道，服务端也在 SavingsService.validateNewPlan 里拦）：
+ * - 「总资产」计划全账号只能有一条：列表页只把第一条 type=asset 渲染成横跨整行的大卡，
+ *   多出来的在页面上根本看不见，所以已有总资产计划时这里直接禁用该选项；
+ * - 目标日期不能早于开始日期。
+ */
+
+const router = useRouter()
+
+// 需要知道「是否已有总资产计划」才能决定类型选项能不能点；失败也不拦着填表，默认按没有处理
+const { data: existingPlans } = useRequest(() => getSavingsPlans())
+const hasAssetPlan = computed(() => (existingPlans.value ?? []).some((p) => p.type === 'asset'))
+
+const typeOptions: { value: SavingsPlanType; label: string; hint: string; icon: Component }[] = [
+  { value: 'asset', label: '总资产', hint: '全账号只能有一个，横跨列表整行', icon: Wallet },
+  { value: 'life', label: '生活保障', hint: '应急金、备用金这类', icon: Shield },
+  { value: 'wish', label: '愿望', hint: '一次旅行、一件想买的东西…', icon: Heart },
+]
+
+/** 今天 YYYY-MM-DD（开始日期默认值） */
+function today(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+const form = ref({
+  name: '',
+  type: 'wish' as SavingsPlanType,
+  targetAmount: '',
+  monthlyPlanAmount: '',
+  startDate: today(),
+  targetDate: '',
+  description: '',
+  image: '',
+  note: '',
+})
+
+/**
+ * 是否设定目标金额（2026-10-05 加）。关掉 = 这个计划不追目标，只看选中的这组资产的总体收益率，
+ * 目标金额 / 目标日期 / 每月计划存入 三个框一起隐藏、提交时也不带。
+ * 「总资产」计划必须带目标（后端也会拒），所以选它时这个开关强制打开并禁用。
+ */
+const hasTarget = ref(true)
+
+/** 表单里勾选的资产（只有生活保障 / 愿望用得上；总资产计划本来就全含） */
+const selectedAssetIds = ref<string[]>([])
+
+// 新建时还没有计划，用「计划无关」的候选接口
+const { data: candidates, loading: candidatesLoading } = useRequest(() => getNewPlanCandidates())
+
+function toggleAsset(id: string) {
+  const index = selectedAssetIds.value.indexOf(id)
+  if (index >= 0) selectedAssetIds.value.splice(index, 1)
+  else selectedAssetIds.value.push(id)
+}
+
+const saving = ref(false)
+const error = ref('')
+
+/** 与 AdjustmentForm / EntryView 同一个字符串（项目里没有 Input 组件，各处照抄一份） */
+const inputClass =
+  'w-full rounded-lg border border-border bg-background px-3.5 py-2.5 text-sm transition-colors placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand disabled:opacity-50 disabled:cursor-not-allowed'
+
+function pickType(type: SavingsPlanType) {
+  if (type === 'asset' && hasAssetPlan.value) return
+  form.value.type = type
+  // 总资产计划 = 「全部未归档资产」的目标，必须有目标金额；切到它时把开关顶上
+  if (type === 'asset') hasTarget.value = true
+}
+
+async function submit() {
+  error.value = ''
+  const name = form.value.name.trim()
+  const targetAmount = Number(form.value.targetAmount)
+  const monthlyPlanAmount = Number(form.value.monthlyPlanAmount)
+
+  // 手写校验：与后端 SavingsService.validateNewPlan 一一对应，先在后端前面拦一道，省一次往返
+  if (!name) return (error.value = '请填写计划名称')
+  if (!form.value.startDate) return (error.value = '请选择开始日期')
+  if (form.value.type === 'asset' && hasAssetPlan.value) return (error.value = '已有总资产计划，只能新建生活保障或愿望')
+  if (form.value.type === 'asset' && !hasTarget.value) return (error.value = '总资产计划需要设定目标金额')
+  if (hasTarget.value) {
+    if (!(targetAmount > 0)) return (error.value = '目标金额要大于 0')
+    if (!(monthlyPlanAmount > 0)) return (error.value = '每月计划存入要大于 0')
+    if (!form.value.targetDate) return (error.value = '请选择目标日期')
+    if (form.value.targetDate < form.value.startDate) return (error.value = '目标日期不能早于开始日期')
+  }
+
+  const payload: SavingsPlanPayload = {
+    name,
+    type: form.value.type,
+    startDate: form.value.startDate,
+    // 不设目标时这三个字段整个不传：后端会落 NULL（也避免空串日期被 Jackson 判成 400）
+    targetAmount: hasTarget.value ? targetAmount : undefined,
+    monthlyPlanAmount: hasTarget.value ? monthlyPlanAmount : undefined,
+    targetDate: hasTarget.value ? form.value.targetDate : undefined,
+    // 选填字段留空传 undefined：后端把空白串一律存 null，但少传一个字段更干净
+    description: form.value.description.trim() || undefined,
+    image: form.value.image.trim() || undefined,
+    note: form.value.note.trim() || undefined,
+    // 勾了资产才带（总资产计划忽略该字段）
+    assetIds:
+      form.value.type !== 'asset' && selectedAssetIds.value.length
+        ? [...selectedAssetIds.value]
+        : undefined,
+  }
+
+  saving.value = true
+  try {
+    const created = await createSavingsPlan(payload)
+    // replace 而不是 push：返回键不该回到一张已经提交过的空表单
+    router.replace({ name: 'savings-detail', params: { id: created.id } })
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : '保存失败，请稍后重试'
+  } finally {
+    saving.value = false
+  }
+}
+</script>
+
+<template>
+  <!-- min-h-screen + flex-col：脚注永远落在界面底部 -->
+  <div
+    class="mx-auto flex min-h-screen w-full max-w-[1400px] flex-col px-4 pt-6 pb-[18px] sm:px-10 lg:pt-4"
+  >
+    <!-- 占位：与投资看板的返回按钮区对齐 -->
+    <div class="mb-4 flex shrink-0 items-center gap-3 lg:mb-3">
+      <Button variant="ghost" size="sm" class="gap-1.5" @click="router.push({ name: 'savings' })">
+        <ArrowLeft class="size-4" />
+        返回
+      </Button>
+    </div>
+
+    <!-- 标题区 -->
+    <div class="mb-6 space-y-1.5">
+      <h1 class="text-3xl font-bold tracking-tight">新建存钱计划</h1>
+      <p class="text-sm text-muted-foreground">把钱和目标联系起来，让每一份努力都有意义。</p>
+    </div>
+
+    <!-- 表单卡片 -->
+    <Card class="mx-auto w-full max-w-2xl">
+      <div class="flex items-start gap-4 px-5 pt-5 sm:px-6 sm:pt-6">
+        <div
+          class="flex size-11 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand"
+        >
+          <Plus class="size-5" />
+        </div>
+        <div class="space-y-1">
+          <h2 class="text-lg font-semibold leading-tight">计划信息</h2>
+          <p class="text-xs text-muted-foreground">
+            带 * 的是必填项；新建计划的已存金额从 0 开始，进度跟着关联资产的市值走。
+          </p>
+        </div>
+      </div>
+
+      <form class="space-y-5 px-5 pb-6 pt-5 sm:px-6" @submit.prevent="submit">
+        <!-- 计划名称 -->
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-foreground" for="plan-name">计划名称 *</label>
+          <input
+            id="plan-name"
+            v-model="form.name"
+            type="text"
+            maxlength="100"
+            :disabled="saving"
+            :class="inputClass"
+            placeholder="例如：日本旅行 / 30岁资产目标"
+          />
+        </div>
+
+        <!-- 类型 -->
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-foreground">类型 *</label>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <button
+              v-for="opt in typeOptions"
+              :key="opt.value"
+              type="button"
+              :disabled="saving || (opt.value === 'asset' && hasAssetPlan)"
+              class="flex items-center gap-3 rounded-xl border p-3.5 text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              :class="
+                form.type === opt.value
+                  ? 'border-brand bg-brand/10 text-brand ring-1 ring-brand/30'
+                  : 'border-border hover:bg-muted hover:border-foreground/20'
+              "
+              @click="pickType(opt.value)"
+            >
+              <component :is="opt.icon" class="size-5 shrink-0" />
+              <div class="min-w-0">
+                <p class="text-sm font-semibold leading-tight">{{ opt.label }}</p>
+                <p class="mt-0.5 text-xs leading-tight text-muted-foreground">{{ opt.hint }}</p>
+              </div>
+            </button>
+          </div>
+          <p v-if="hasAssetPlan" class="text-xs text-muted-foreground">
+            已有总资产计划（一个账号只能有一个），新计划只能建生活保障或愿望。
+          </p>
+        </div>
+
+        <!-- 设定目标开关：关掉就是「只看这组资产的收益」，目标金额/日期/每月存入一起消失 -->
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-foreground">目标</label>
+          <button
+            type="button"
+            :disabled="saving || form.type === 'asset'"
+            class="flex w-full items-center gap-3 rounded-xl border p-3.5 text-left transition-all disabled:cursor-not-allowed disabled:opacity-60"
+            :class="hasTarget ? 'border-brand bg-brand/10 text-brand ring-1 ring-brand/30' : 'border-border hover:bg-muted hover:border-foreground/20'"
+            @click="hasTarget = !hasTarget"
+          >
+            <span
+              class="flex size-5 shrink-0 items-center justify-center rounded-md border"
+              :class="hasTarget ? 'border-brand bg-brand text-brand-foreground' : 'border-border text-transparent'"
+            >
+              <Check class="size-3.5" />
+            </span>
+            <span class="min-w-0 flex-1">
+              <span class="flex items-center gap-2 text-sm font-semibold leading-tight">
+                <Target class="size-4" />
+                设定目标金额
+              </span>
+              <span class="mt-0.5 block text-xs leading-tight text-muted-foreground">
+                {{ form.type === 'asset'
+                  ? '总资产计划必须设定目标金额'
+                  : hasTarget
+                    ? '按目标金额追进度'
+                    : '不设目标：只看这组资产的整体收益率' }}
+              </span>
+            </span>
+          </button>
+        </div>
+
+        <!-- 金额（只在设了目标时出现） -->
+        <div v-if="hasTarget" class="grid gap-5 sm:grid-cols-2">
+          <div class="space-y-2">
+            <label class="text-sm font-medium text-foreground" for="plan-target">目标金额 *</label>
+            <div class="relative">
+              <span class="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">¥</span>
+              <input
+                id="plan-target"
+                v-model="form.targetAmount"
+                type="number"
+                inputmode="decimal"
+                step="0.01"
+                min="0"
+                :disabled="saving"
+                :class="[inputClass, 'pl-8']"
+                placeholder="10000"
+              />
+            </div>
+          </div>
+          <div class="space-y-2">
+            <label class="text-sm font-medium text-foreground" for="plan-monthly">每月计划存入 *</label>
+            <div class="relative">
+              <span class="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">¥</span>
+              <input
+                id="plan-monthly"
+                v-model="form.monthlyPlanAmount"
+                type="number"
+                inputmode="decimal"
+                step="0.01"
+                min="0"
+                :disabled="saving"
+                :class="[inputClass, 'pl-8']"
+                placeholder="1000"
+              />
+            </div>
+            <p class="text-xs text-muted-foreground">用于推算预计完成时间，要大于 0</p>
+          </div>
+        </div>
+
+        <!-- 日期（目标日期只在设了目标时出现） -->
+        <div class="grid gap-5 sm:grid-cols-2">
+          <div class="space-y-2">
+            <label class="text-sm font-medium text-foreground" for="plan-start">开始日期 *</label>
+            <input
+              id="plan-start"
+              v-model="form.startDate"
+              type="date"
+              :disabled="saving"
+              :class="inputClass"
+            />
+          </div>
+          <div v-if="hasTarget" class="space-y-2">
+            <label class="text-sm font-medium text-foreground" for="plan-target-date">目标日期 *</label>
+            <input
+              id="plan-target-date"
+              v-model="form.targetDate"
+              type="date"
+              :disabled="saving"
+              :class="inputClass"
+            />
+          </div>
+        </div>
+
+        <!-- 描述 -->
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-foreground" for="plan-desc">描述</label>
+          <input
+            id="plan-desc"
+            v-model="form.description"
+            type="text"
+            maxlength="512"
+            :disabled="saving"
+            :class="inputClass"
+            placeholder="一句话说明这个计划（选填）"
+          />
+        </div>
+
+        <!-- 封面图 -->
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-foreground" for="plan-image">封面图地址</label>
+          <input
+            id="plan-image"
+            v-model="form.image"
+            type="url"
+            maxlength="255"
+            :disabled="saving"
+            :class="inputClass"
+            placeholder="https://…（选填，留空用占位图）"
+          />
+        </div>
+
+        <!-- 备注 -->
+        <div class="space-y-2">
+          <label class="text-sm font-medium text-foreground" for="plan-note">备注</label>
+          <textarea
+            id="plan-note"
+            v-model="form.note"
+            rows="3"
+            :disabled="saving"
+            :class="[inputClass, 'resize-y']"
+            placeholder="想对自己说的话、计划的细节（选填）"
+          />
+        </div>
+
+        <!-- 选择资产：建计划时就把要计入的资产勾好，省得建完再进详情页挂 -->
+        <div class="space-y-2">
+          <div class="flex items-baseline justify-between gap-3">
+            <label class="text-sm font-medium text-foreground">
+              包含的资产
+              <span v-if="form.type !== 'asset'" class="ml-1 text-xs font-normal text-muted-foreground">
+                已选 {{ selectedAssetIds.length }} 项（可留空，之后再挂）
+              </span>
+            </label>
+          </div>
+
+          <p
+            v-if="form.type === 'asset'"
+            class="rounded-xl border border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground"
+          >
+            总资产计划默认包含全部未归档资产，不需要手动勾选。
+          </p>
+          <div v-else class="rounded-xl border border-border bg-muted/20 p-3">
+            <p v-if="candidatesLoading" class="px-1 py-2 text-sm text-muted-foreground">加载中…</p>
+            <p v-else-if="!candidates?.length" class="px-1 py-2 text-sm text-muted-foreground">
+              名下还没有资产，先到「录入数据」记一笔。
+            </p>
+            <ul v-else class="max-h-[260px] space-y-1 overflow-y-auto">
+              <li v-for="c in candidates" :key="c.id">
+                <button
+                  type="button"
+                  :disabled="saving || c.archived"
+                  class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  :title="c.archived ? '已归档的资产不计入计划，先取消归档再关联' : undefined"
+                  @click="toggleAsset(c.id)"
+                >
+                  <span
+                    class="flex size-5 shrink-0 items-center justify-center rounded-md border text-xs"
+                    :class="selectedAssetIds.includes(c.id)
+                      ? 'border-brand bg-brand text-brand-foreground'
+                      : 'border-border text-transparent'"
+                  >
+                    <Check class="size-3.5" />
+                  </span>
+                  <span class="min-w-0 flex-1 truncate text-sm">
+                    {{ c.name }}
+                    <span class="ml-1 font-mono text-xs text-muted-foreground">{{ c.code }}</span>
+                  </span>
+                  <span v-if="c.archived" class="shrink-0 text-xs text-muted-foreground">已归档</span>
+                  <span class="shrink-0 font-mono text-sm tabular-nums text-muted-foreground">
+                    {{ formatCNY(c.amount) }}
+                  </span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
+
+        <div class="flex items-center gap-3 pt-1">
+          <Button type="submit" :disabled="saving" class="gap-2">
+            <Loader2 v-if="saving" class="size-4 animate-spin" />
+            <Plus v-else class="size-4" />
+            {{ saving ? '创建中…' : '创建计划' }}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            :disabled="saving"
+            @click="router.push({ name: 'savings' })"
+          >
+            取消
+          </Button>
+        </div>
+      </form>
+    </Card>
+
+    <PageFooter />
+  </div>
+</template>
