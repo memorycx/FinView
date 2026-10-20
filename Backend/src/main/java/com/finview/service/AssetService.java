@@ -35,19 +35,25 @@ public class AssetService {
 
     /**
      * 展示桶的中文名，与前端 AssetOverview 的图例一致；顺序固定，前端按桶 key 取色。
-     * 基金不单独成桶：按 asset.asset_type 细分成股票基金（equityFund）/ 债券基金（bondFund）。
+     * 基金不单独成桶：按 asset.asset_type 细分成股票基金（equityFund）/ 债券基金（bondFund）/
+     * 货币基金（moneyFund，2026-10-13 加）。
      */
     private static final Map<String, String> BUCKET_LABELS = new LinkedHashMap<>();
 
     /** 分布维度：category 之外支持的三列，取值与前端 DistributionDim 一致 */
     private static final List<String> DISTRIBUTION_DIMS = List.of("industry", "region", "currency");
 
-    /** 安全资金的 asset_type 取值：债基 + 现金（2026-10-02 约定，见 AssetSummaryResponse.safeAssets） */
-    private static final Set<String> SAFE_ASSET_TYPES = Set.of("bond", "cash");
+    /**
+     * 安全资金的 asset_type 取值：债基 + 货币基金 + 现金。
+     * 债基 + 现金是 2026-10-02 的约定；货币基金是 2026-10-13 用户确认加进来的
+     * （货币基金本来就是现金管理工具，低风险、流动性好），见 AssetSummaryResponse.safeAssets。
+     */
+    private static final Set<String> SAFE_ASSET_TYPES = Set.of("bond", "money", "cash");
 
     static {
         BUCKET_LABELS.put("equityFund", "股票基金");
         BUCKET_LABELS.put("bondFund", "债券基金");
+        BUCKET_LABELS.put("moneyFund", "货币基金");
         BUCKET_LABELS.put("stock", "股票");
         BUCKET_LABELS.put("bond", "债券");
         BUCKET_LABELS.put("cash", "现金");
@@ -61,7 +67,7 @@ public class AssetService {
         Map<String, BigDecimal> totals = latestTotals(userId);
 
         // 五个展示桶先占位为 0，保证前端图例不缺项；未知分类不丢数据，按原样单列一项。
-        // 顺手累加安全资金：asset_type ∈ {bond, cash} 的市值（未标注的按「非安全」计）
+        // 顺手累加安全资金：asset_type ∈ {bond, money, cash} 的市值（未标注的按「非安全」计）
         Map<String, BigDecimal> byBucket = new LinkedHashMap<>();
         BUCKET_LABELS.keySet().forEach(bucket -> byBucket.put(bucket, BigDecimal.ZERO));
         BigDecimal safeAssets = BigDecimal.ZERO;
@@ -132,12 +138,20 @@ public class AssetService {
      * 未标注（null，存量没标过的）按股票基金算；其余大类原样返回，未知分类也单列一项、不丢数据。
      * 包级可见是为了单测（见 AssetServiceTest），与 PortfolioService.aggregate 同一套路。
      */
+    /** 展示桶的中文名；未知桶原样返回（给「资金全景」等页面取 label 用，与 summary 同一份表） */
+    static String bucketLabel(String bucket) {
+        return BUCKET_LABELS.getOrDefault(bucket, bucket);
+    }
+
     static String bucketOf(Asset asset) {
         String category = StringUtils.hasText(asset.getCategory()) ? asset.getCategory() : "fund";
         if (!"fund".equals(category)) {
             return category;
         }
-        return "bond".equals(asset.getAssetType()) ? "bondFund" : "equityFund";
+        if ("bond".equals(asset.getAssetType())) {
+            return "bondFund";
+        }
+        return "money".equals(asset.getAssetType()) ? "moneyFund" : "equityFund";
     }
 
     /** 某资产当前市值：优先取序列末行，没有序列则用 asset 表的快照 */

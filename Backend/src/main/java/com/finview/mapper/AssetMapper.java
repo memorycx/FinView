@@ -3,6 +3,7 @@ package com.finview.mapper;
 import com.finview.entity.Asset;
 import org.apache.ibatis.annotations.Param;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -51,7 +52,7 @@ public interface AssetMapper {
                    @Param("name") String name);
 
     /**
-     * 改资产类型（录入 / 修改调整记录时带了 assetType 才调用，取值 equity / bond）。
+     * 改资产类型（录入 / 修改调整记录时带了 assetType 才调用，取值 equity / bond / money）。
      *
      * 与 {@link #updateName} 同款：单独一条语句、不并进 {@link #upsertSnapshot}——
      * 快照每次推进序列都会刷，而类型只在用户明确选择时才该被改写。
@@ -62,4 +63,20 @@ public interface AssetMapper {
     int updateAssetType(@Param("userId") Long userId,
                         @Param("code") String code,
                         @Param("assetType") String assetType);
+
+    /**
+     * 一次性改掉基金基础信息（定投详情页「编辑」按钮）：name / asset_type / rate / market。
+     *
+     * 与 {@link #updateName} / {@link #updateAssetType} 一样只碰用户维护的元数据，快照列与
+     * category / industry / region / currency / archived 全都不动。
+     * rate 与 market 会参与序列生成（手续费、QDII 扣款日），调用方改完要重算 asset_series。
+     *
+     * @return 受影响行数，0 表示该 code 还没有 asset 行（或不属于该用户）
+     */
+    int updateMetadata(@Param("userId") Long userId,
+                       @Param("code") String code,
+                       @Param("name") String name,
+                       @Param("assetType") String assetType,
+                       @Param("rate") BigDecimal rate,
+                       @Param("market") String market);
 }

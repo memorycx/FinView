@@ -1,4 +1,4 @@
-import type { Fund, SavingsPlan } from '../types'
+import type { Fund, SavingsPlan, SavingsPlanTypeItem } from '../types'
 
 /**
  * Mock 数据库：与后端存储同构的原始数据集。
@@ -21,6 +21,9 @@ export const db: { funds: Fund[]; savingsPlans: SavingsPlan[] } = {
       archived: false,
       frequency: 'monthly',
       amount: 3000,
+      // 申购费率（百分数）与标的市场：编辑弹窗的回填值；A 股基金 market 为 null
+      rate: 0.12,
+      market: null,
       startDate: '2019-03',
       principal: 246000,
       current: 312400,
@@ -128,6 +131,9 @@ export const db: { funds: Fund[]; savingsPlans: SavingsPlan[] } = {
       archived: false,
       frequency: 'weekly',
       amount: 600,
+      // QDII 标的美股：扣款日要叠加 NYSE 休市日
+      rate: 0.5,
+      market: 'us',
       startDate: '2020-01',
       principal: 174000,
       current: 268900,
@@ -223,6 +229,7 @@ export const db: { funds: Fund[]; savingsPlans: SavingsPlan[] } = {
       name: '30岁资产目标',
       description: '财务自由，从现在开始',
       type: 'asset',
+      typeName: '总资产',
       currentAmount: 0,
       targetAmount: 600000,
       startDate: '2025-01-01',
@@ -244,6 +251,7 @@ export const db: { funds: Fund[]; savingsPlans: SavingsPlan[] } = {
       description: '去看更大的世界，体验不同的风景和文化。',
       // 与真库的迁移一致：2026-10-05 之前建的 wish 行统一归到「生活保障」
       type: 'life',
+      typeName: '生活保障',
       image: 'https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=japanese%20landmark%20torii%20gate%20kyoto%20travel&image_size=landscape_4_3',
       currentAmount: 0,
       targetAmount: 10000,
@@ -275,3 +283,13 @@ export const planAssetLinks: Record<string, string[]> = {
 
 // 注意：不要加 `as const`，也不要退回 `satisfies` —— 前者把数组推成 readonly 元组、
 // 后者保留字面量推导出的联合类型，都会让 handlers 往 funds[].adjustments 里 push 时报 never。
+
+/**
+ * 计划类型 fixture：内置三种（真后端由 SavingsService 首次访问时幂等补种，这里直接备好）。
+ * 用户在新建页建的自定义类型由 handlers 追加进来（会话内可变）。
+ */
+export const planTypes: SavingsPlanTypeItem[] = [
+  { id: 'type-asset', code: 'asset', name: '总资产', builtin: true, system: true },
+  { id: 'type-life', code: 'life', name: '生活保障', builtin: true, system: false },
+  { id: 'type-wish', code: 'wish', name: '愿望', builtin: true, system: false },
+]

@@ -19,7 +19,7 @@ import java.util.Map;
  * </pre>
  *
  * 为什么是 {@code amount + fee}：asset_series 的 amount 是**扣掉申购费之后的净投入**
- * （买入为正、卖出一笔支出为负），手续费单列在 fee 里 —— 两者相加才是平台当天从卡里划走的钱。
+ * （买入为正、卖出为负），手续费单列在 fee 里 —— 两者相加才是平台当天从卡里划走的钱。
  * 卖出时 amount 为负、fee 为 0，式子自然得到正的流入，不需要分支。
  *
  * **联动起点之前的历史一律不补**：用户的历史买入发生在起点之前，那部分钱早就出去了、
@@ -30,10 +30,10 @@ import java.util.Map;
  */
 final class CashLedger {
 
-    /** 一笔收入：现金增加（与 AdjustmentService 的 VALID_ACTIONS 一致） */
+    /** 买入（现金进账）：现金增加（与 AdjustmentService 的 VALID_ACTIONS 一致） */
     private static final int ACTION_INCOME = 3;
 
-    /** 一笔支出：现金减少 */
+    /** 卖出（现金出账）：现金减少 */
     private static final int ACTION_EXPENSE = 4;
 
     private CashLedger() {

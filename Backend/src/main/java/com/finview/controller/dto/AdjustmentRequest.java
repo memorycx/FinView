@@ -37,7 +37,7 @@ public class AdjustmentRequest {
     private String name;
 
     /**
-     * 基金细分类型：equity 股基 / bond 债基，选填。
+     * 基金细分类型：equity 股基 / bond 债基 / money 货币基金，选填。
      * 同样不落 adjustments 表：填了才写 asset.asset_type（新建的基金行默认 equity）。
      * **不填 = 不修改已有分类**（给一只债基录常规买入不会把它翻回股基）；
      * 现金（code=CASH）带它会像 frequency 一样被归一掉 —— 现金的类型是系统语义。
@@ -53,9 +53,17 @@ public class AdjustmentRequest {
     @Size(max = 255, message = "变动原因长度不能超过 255")
     private String reason;
 
-    /** 动作：1定投开始，2结束定投，3一笔收入，4一笔支出 */
+    /** 动作：1定投开始，2结束定投，3买入，4卖出（现金的进账 / 出账也走 3 / 4） */
     @NotNull(message = "动作不能为空")
     private Integer action;
+
+    /**
+     * 是否从下一交易日起生效（仅 action=1 有意义）：
+     * true = 记录日只写时间线，频率与金额从严格晚于记录日的下一个交易日起生效（当天仍按原计划扣）；
+     * 不传 / false = 原有口径（只改金额当天生效、改频率次日生效）。
+     * 定投详情页的「调整定投」按钮固定传 true。
+     */
+    private Boolean deferred;
 
     /** 定投频率，仅 action=1 需要，其余动作传了也会被忽略 */
     @Size(max = 64, message = "频率长度不能超过 64")

@@ -1,9 +1,31 @@
 import { request } from '../http'
-import type { SavingsPlan, SavingsPlanCandidate, SavingsPlanPayload } from '../types'
+import type { SavingsPlan, SavingsPlanCandidate, SavingsPlanPayload, SavingsPlanTypeItem } from '../types'
 
 /** 获取存钱计划列表 */
 export function getSavingsPlans() {
   return request<SavingsPlan[]>({ url: '/savings/plans' })
+}
+
+/* ==================== 计划类型（内置 + 自定义） ==================== */
+
+/** 类型列表：内置 asset/life/wish 后端会自动补种，新建计划的类型选择用它 */
+export function getPlanTypes() {
+  return request<SavingsPlanTypeItem[]>({ url: '/savings/plan-types' })
+}
+
+/** 新建自定义类型（code 由后端生成，这里只传显示名） */
+export function createPlanType(name: string) {
+  return request<SavingsPlanTypeItem>({ url: '/savings/plan-types', method: 'POST', body: { name } })
+}
+
+/** 改类型名（只改显示名，计划里存的 code 不变） */
+export function renamePlanType(id: string, name: string) {
+  return request<SavingsPlanTypeItem>({ url: `/savings/plan-types/${id}`, method: 'PUT', body: { name } })
+}
+
+/** 删除类型：系统类型（总资产）不能删，还有计划在用也不能删（后端返回 400 + 中文提示） */
+export function deletePlanType(id: string) {
+  return request<null>({ url: `/savings/plan-types/${id}`, method: 'DELETE' })
 }
 
 /** 获取单个存钱计划详情 */

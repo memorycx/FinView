@@ -15,17 +15,20 @@ export type DistributionDim = 'industry' | 'region' | 'currency'
 /** 资产大类（asset.category）：fund 不再细分，股基/债基看下面的 FundType */
 export type AssetCategory = 'fund' | 'stock' | 'bond' | 'cash'
 
-/** 基金细分类型（asset.asset_type）：equity 股票基金 / bond 债券基金。cash 只属于保留 code CASH */
-export type FundType = 'equity' | 'bond'
+/** 基金细分类型（asset.asset_type）：equity 股票基金 / bond 债券基金 / money 货币基金。cash 只属于保留 code CASH */
+export type FundType = 'equity' | 'bond' | 'money'
 
 /**
  * 资产总览（/assets/summary）的展示桶 key：基金按 FundType 细分成股票基金 / 债券基金，
  * **不是 asset.category 原值**——两行同 key 会撞开 v-for 与取色表，所以后端派生后单列。
  */
-export type AllocationBucket = 'equityFund' | 'bondFund' | 'stock' | 'bond' | 'cash'
+export type AllocationBucket = 'equityFund' | 'bondFund' | 'moneyFund' | 'stock' | 'bond' | 'cash'
 
 /** 定投频率 */
 export type InvestFrequency = 'daily' | 'weekly' | 'monthly'
+
+/** 标的市场：us 美股 / hk 港股；null = A 股（只有 QDII 需要标，见 asset.market） */
+export type FundMarket = 'us' | 'hk'
 
 /** 时间序列数据点（按日/月采样） */
 export type DayPoint = {
@@ -69,6 +72,11 @@ export type PlanAdjustment = {
   frequency: InvestFrequency | null
   /** 调整后的每期定投金额，null 表示停止定投 */
   amount: number | null
+  /**
+   * 是否从下一交易日起生效：只有「调整定投」创建的行动记录为 true。
+   * 时间线据此显示「次一交易日起生效」。
+   */
+  deferred?: boolean
   note?: string
 }
 
@@ -92,6 +100,13 @@ export type Fund = {
   frequency: InvestFrequency
   /** 当前每期定投金额 */
   amount: number
+  /**
+   * 申购费率（**百分数**，0.12 = 0.12%），来自 asset.rate；null / 0 = 不收申购费。
+   * 定投详情页的「编辑」按钮用它回填；改完由后端整段重算序列。
+   */
+  rate?: number | null
+  /** 标的市场：us / hk；null = A 股。定投详情页的编辑表单用它回填 */
+  market?: FundMarket | null
   /** 开始时间 YYYY-MM */
   startDate: string
   /** 累计投入本金（不含手续费的净本金） */
@@ -123,14 +138,29 @@ export type Fund = {
   adjustments: PlanAdjustment[]
 }
 
+/**
+ * 编辑基金基础信息入参（PUT /funds/{id}，定投详情页的「编辑」按钮）。
+ * 编码不在这里：它是 adjustments / asset_series / nav_trend / plan_asset 的关联键，不允许改。
+ */
+export interface FundUpdatePayload {
+  /** 资产名称，必填 */
+  name: string
+  /** 基金细分类型：与 asset.asset_type 一致 */
+  assetType: FundType
+  /** 申购费率（百分数）；null = 不收申购费 */
+  rate: number | null
+  /** 标的市场；null = A 股 */
+  market: FundMarket | null
+}
+
 /* ==================== 资产调整记录（录入数据） ==================== */
 
 /**
  * 资产调整动作：
  * - 1 定投开始
  * - 2 结束定投
- * - 3 一笔收入
- * - 4 一笔支出
+ * - 3 买入（一次性资金流入；现金的进账也用它）
+ * - 4 卖出（一次性资金流出；现金的出账也用它）
  */
 export type AdjustmentAction = 1 | 2 | 3 | 4
 
@@ -154,8 +184,13 @@ export interface AdjustmentPayload {
   date: string
   /** 变动原因 */
   reason?: string
-  /** 动作：1定投开始 / 2结束定投 / 3一笔收入 / 4一笔支出 */
+  /** 动作：1定投开始 / 2结束定投 / 3买入 / 4卖出（现金为进账 / 出账） */
   action: AdjustmentAction
+  /**
+   * 仅 action=1 有意义：true = 从下一交易日起生效（当天仍按原计划扣款，频率与金额都从次日开始生效）。
+   * 不传 / false = 原有口径（只改金额当天生效、改频率次日生效）。
+   */
+  deferred?: boolean
   /** 定投频率，仅 action=1（定投开始）时需要 */
   frequency?: InvestFrequency | null
   /** 金额 */
@@ -176,8 +211,10 @@ export interface Adjustment {
   date: string
   /** 变动原因 */
   reason: string | null
-  /** 动作：1定投开始 / 2结束定投 / 3一笔收入 / 4一笔支出 */
+  /** 动作：1定投开始 / 2结束定投 / 3买入 / 4卖出（现金为进账 / 出账） */
   action: AdjustmentAction
+  /** 是否从下一交易日起生效（仅 action=1；历史记录为 false） */
+  deferred?: boolean
   /** 频率 */
   frequency: string | null
   /** 金额 */
@@ -201,7 +238,7 @@ export type AssetSummary = {
   /** 总资产（元） */
   totalAssets: number
   /**
-   * 安全资金（元）= asset_type 为 bond（债基）/ cash（现金）的资产市值合计（后端算好，口径见 types /
+   * 安全资金（元）= asset_type 为 bond（债基）/ money（货币基金）/ cash（现金）的市值合计（后端算好，口径见
    * AssetSummaryResponse）；「安全资金占比」= safeAssets / totalAssets。未标注类型按股票基金算，同样非安全
    */
   safeAssets: number
@@ -227,6 +264,26 @@ export type DistributionData = Record<DistributionDim, DistributionItem[]>
  */
 export type SavingsPlanType = 'asset' | 'life' | 'wish'
 
+/**
+ * 一个计划类型的完整定义（/savings/plan-types）。
+ *
+ * **类型可以自定义**（2026-10-13 起）：`code` 是稳定标识（计划存的就是它），`name` 是可改的显示名，
+ * 所以改名不用碰任何计划。内置三种（asset/life/wish）由后端首次访问时自动补种；
+ * 自定义类型 code 形如 `c8f3a1b2`。只有 `system`（= asset）不能改名 / 删除。
+ */
+export type SavingsPlanTypeItem = {
+  /** 类型 id（改 / 删时用） */
+  id: string
+  /** 类型标识：内置 asset/life/wish，自定义 c+随机串；计划的 type 与之对应 */
+  code: string
+  /** 显示名（可改） */
+  name: string
+  /** 内置类型（asset/life/wish），界面上标「内置」 */
+  builtin: boolean
+  /** 系统类型（只有 asset）：不能改名、不能删除 */
+  system: boolean
+}
+
 /** 计划内持有的资产项 */
 export type SavingsAsset = {
   /** 资产 id（解除关联时用；也是列表渲染的 key —— 名字可以重复、也可能被改） */
@@ -235,8 +292,22 @@ export type SavingsAsset = {
   code: string
   name: string
   amount: number
+  /**
+   * 这只资产自己的收益四件套（与计划整体那份同口径，直接喂 lib/finance.ts 的 profit / returnRate）。
+   * **现金为 null**：它没有 asset_series、本金恒等于市值，谈不上收益 —— 界面显示「—」。
+   */
+  returnStats: SavingsReturnStats | null
   /** 图表主题色变量 */
   colorVar?: string
+  /**
+   * 当前是否正在执行定投。**只有计划详情类响应才有**：
+   * 列表响应为 null/undefined（不为每个计划各 fold 一次），前端按「未计算」处理。
+   */
+  dcaActive?: boolean | null
+  /** 当前定投频率；未在定投时为 null */
+  dcaFrequency?: InvestFrequency | null
+  /** 当前每期定投金额（元）；未在定投时为 null */
+  dcaAmount?: number | null
 }
 
 /** 「添加资产」面板里的一条候选（= 该用户的某项资产） */
@@ -250,6 +321,11 @@ export type SavingsPlanCandidate = {
   linked: boolean
   /** 是否已归档：已归档的不能新关联（已关联的仍要显示出来以便解除） */
   archived: boolean
+  /**
+   * 已在**另一个计划**里时，那个计划的名字（一一对应规则：一个资产只能属于一个分类）；
+   * 没有归属、或就是本计划时是 null。界面据此把这一行禁用并提示「已在『养老金』里」。
+   */
+  linkedPlanName?: string | null
 }
 
 /** 月度存入数据点 */
@@ -257,6 +333,40 @@ export type SavingsMonthPoint = {
   /** YYYY-MM */
   month: string
   amount: number
+}
+
+/** 计划详情里的单项资产（图例 + 配色） */
+export type SavingsInflowAsset = {
+  code: string
+  name: string
+  /** 图表主题色变量，如 --chart-1 */
+  colorVar?: string | null
+}
+
+/** 未来流入的单月明细 */
+export type SavingsInflowMonth = {
+  /** YYYY-MM */
+  month: string
+  /** 当月定投流入合计（元） */
+  total: number
+  /** code → 当月金额，只放非零项；空对象 = 这个月没有扣款 */
+  byAsset: Record<string, number>
+}
+
+/**
+ * 计划详情的未来 12 个月定投流入（对应后端 SavingsInflowForecastResponse）。
+ *
+ * 口径与「定投分析」的现金流预测同源：下月起 12 个完整自然月、只算周期定投
+ * （action=1/2）、金额 = amount + fee、按实际扣款日归月（顺延到次月就记在次月）。
+ * `assets` 只含窗口内有金额的资产；`months` 恒 12 项，没扣款的月份 total=0。
+ */
+export type SavingsInflowForecast = {
+  /** 窗口首月，如 2026-11 */
+  fromMonth: string
+  /** 窗口末月，如 2027-10 */
+  toMonth: string
+  assets: SavingsInflowAsset[]
+  months: SavingsInflowMonth[]
 }
 
 /**
@@ -280,7 +390,10 @@ export type SavingsPlan = {
   id: string
   name: string
   description: string
-  type: SavingsPlanType
+  /** 类型 code：内置 asset/life/wish，或用户自定义类型（c+随机串）。判断总资产用 `type === 'asset'` */
+  type: string
+  /** 类型显示名（用户可改）；分类标签直接用它，别自己再映射一套 */
+  typeName: string
   /** 详情页头图 URL（留空则占位） */
   image?: string
   /** 当前市值：计划内资产的最新市值合计（后端算的） */
@@ -303,6 +416,11 @@ export type SavingsPlan = {
   assets: SavingsAsset[]
   /** 月度存入走势 */
   series: SavingsMonthPoint[]
+  /**
+   * 未来 12 个月定投流入预测。**只有计划详情类接口返回**（列表没有）；
+   * mock 模式也可能缺省，页面据此隐藏「未来资金流入」卡片。
+   */
+  inflowForecast?: SavingsInflowForecast | null
 }
 
 /**
@@ -315,7 +433,8 @@ export type SavingsPlan = {
  */
 export type SavingsPlanPayload = {
   name: string
-  type: SavingsPlanType
+  /** 类型 code：必须是该用户类型表里的（内置三种或自定义），普通计划不设目标时也行（总资产除外） */
+  type: string
   description?: string
   /** 封面图 URL，选填；留空时前端渲染占位块 */
   image?: string
@@ -332,4 +451,164 @@ export type SavingsPlanPayload = {
   quote?: string
   note?: string
   noteImage?: string
+}
+
+/* ==================== 定投分析（现金流预测） ==================== */
+
+/**
+ * 定投分析里单个自然月的预测点（/cashflow/forecast 的 months[]，恒 12 项、按月份升序）。
+ *
+ * 口径见后端 CashFlowService：窗口 = 下月起 12 个整月；支出按**实际扣款日**归月
+ * （每周一 / 每月 1 日遇非交易日顺延，跨月就记在次月）。
+ */
+export type CashFlowMonth = {
+  /** YYYY-MM */
+  month: string
+  /** 当月现金新增：有单月覆盖用覆盖值，否则用默认的 monthlyInflow（都为 0 时是 0） */
+  inflow: number
+  /** 当月定投支出（元）＝当月实际划走的定投金额合计（申购费从里面扣，不额外增加流出） */
+  outlay: number
+  /** 当月末现金余额 = 上月末余额 + 当月新增 − 当月支出 */
+  endBalance: number
+  /** 这个月的新增是否被单独调整过（true = 点柱子设过；可以「恢复默认」） */
+  overridden: boolean
+}
+
+/**
+ * 定投分析（现金流规划 + 现金积累预测），对应后端 CashFlowForecastResponse。
+ *
+ * 卡片四个数的自洽算式（后端保证精确成立，分位不差）：
+ * `projectedCash = currentCash + 12 × monthlyInflow − 12 × monthlyOutlay`，
+ * 且「12 个月后」= months[11].endBalance。
+ */
+export type CashFlowForecast = {
+  /** 当前可用现金（元）= asset 表 code=CASH 的 total，与 /assets/summary 的现金桶同源 */
+  currentCash: number
+  /**
+   * **默认的**每月固定新增（元）；null = 用户还没设置，页面显示「未设置」并按 0 参与预测。
+   * 单个月份可以在柱状图上点柱子单独覆盖（months[].inflow / overridden）
+   */
+  monthlyInflow: number | null
+  /** 每月定投总额（元）= 未来 12 个月扣款合计 ÷ 12（已四舍五入到分） */
+  monthlyOutlay: number
+  /** 12 个月后预计现金（元）= currentCash + 12 个月新增合计 − 12 × monthlyOutlay（无单月覆盖时 = currentCash + 12 × monthlyInflow − 12 × monthlyOutlay） */
+  projectedCash: number
+  /** 窗口内 12 个月的扣款合计（元），对账用 */
+  totalOutlay: number
+  /** 窗口首月，YYYY-MM（下月起，如 2026-11） */
+  fromMonth: string
+  /** 窗口末月，YYYY-MM（如 2027-10） */
+  toMonth: string
+  /**
+   * 交易日历覆盖到的最后一天（YYYY-MM-DD）；null = 日历没加载。
+   * 日历只覆盖到当年年底，之后的节假日按「周一~周五」估算（扣款日偏多），脚注用它说明。
+   */
+  calendarCoverageEnd: string | null
+  /** 12 个月明细，按月份升序 */
+  months: CashFlowMonth[]
+}
+
+/** 定投日历里的一天（/cashflow/calendar 的 days[]，恒 lengthOfMonth 项） */
+export type CashFlowCalendarDay = {
+  /** YYYY-MM-DD */
+  day: string
+  /** 当日定投金额（元）；非扣款日是 0 */
+  amount: number
+  /** 当日执行的定投计划数量 */
+  plans: number
+  /**
+   * 当天扣款的各基金明细（点某一天时右侧列表用它），按金额降序；没有扣款的日子是空数组。
+   * 名称与配色不在这里重复，按 code 去 funds[] 里取。
+   */
+  funds: { code: string; amount: number }[]
+}
+
+/** 定投日历里一只基金在某月的汇总 */
+export type CashFlowCalendarFund = {
+  code: string
+  name: string
+  /** 本月金额（元） */
+  amount: number
+  /** 占比 0~1 = amount / total */
+  share: number
+  /** 配色变量名（--chart-N），直接写 `var(${colorVar})`；与存钱计划同一套轮转 */
+  colorVar?: string
+}
+
+/**
+ * 定投日历（定投分析页），对应后端 CashFlowCalendarResponse。
+ *
+ * 口径：金额 = 当天**周期扣款**划走的钱（申购费从里面扣，买入/卖出记录不算定投）；
+ * 整月按当前事件流重算（过去的日子也是），本月剩余与未来月份是计划值。
+ */
+export type CashFlowCalendar = {
+  /** 该月，YYYY-MM */
+  month: string
+  /** 导航下界：最早有定投记录的月份 */
+  minMonth: string
+  /** 导航上界：预测窗口末月（本月 + 12） */
+  maxMonth: string
+  /** 本月定投总金额（元） */
+  total: number
+  /** 定投执行天数（金额 > 0 的天数） */
+  executedDays: number
+  /** 涉及基金数量 */
+  fundCount: number
+  /** 日均定投金额（元）= total ÷ executedDays */
+  dailyAverage: number
+  /** 该月每一天，按日期升序 */
+  days: CashFlowCalendarDay[]
+  /** 每只基金的本月金额与占比，按金额降序 */
+  funds: CashFlowCalendarFund[]
+  /** 周一 ~ 周日的金额分布（7 项，下标 0 = 周一） */
+  weekdays: number[]
+  /**
+   * 年度定投金额分布：所选月份那一年的 1~12 月合计（12 项，下标 0 = 1 月）。
+   * 后端会把 fold 推到那一年年尾，所以即使次年年尾超出预测窗口，这里也是完整的 12 个月。
+   */
+  monthsOfYear: number[]
+  /** 年度定投总金额（元）= monthsOfYear 之和 */
+  yearTotal: number
+  /** 年度定投执行天数：当年有扣款的天数 */
+  yearExecutedDays: number
+  /** 年度涉及基金数量 */
+  yearFundCount: number
+  /** 年度日均定投金额（元）= yearTotal ÷ yearExecutedDays；没有执行日时是 0 */
+  yearDailyAverage: number
+}
+
+
+/* ==================== 资金全景（3D 塔视图） ==================== */
+
+/** 塔里的一截（一只资产）；cumulative 与 3D 分段、右侧折线同源 */
+export type PanoramaAsset = {
+  code: string
+  name: string
+  /** 当前市值（元） */
+  value: number
+  /** 3D 分段与右侧折线共用的颜色变量（--chart-N，桶内轮转） */
+  colorVar: string
+  /** 12 项：从今天起到第 i 个月末的累计投入（元），单调不减；现金恒 0 */
+  cumulative: number[]
+}
+
+/** 3D 里的一座塔 = 一个展示桶 */
+export type PanoramaBucket = {
+  /** equityFund / bondFund / moneyFund / stock / bond / cash */
+  key: string
+  label: string
+  /** 桶当前市值（元） */
+  value: number
+  /** 桶内资产，按市值降序（塔从下往上就是这个顺序） */
+  assets: PanoramaAsset[]
+}
+
+/** 「资金全景」页数据，对应后端 PanoramaResponse；口径见 PanoramaService */
+export type Panorama = {
+  /** 数据起点（今天），YYYY-MM-DD */
+  asOf: string
+  /** 12 个自然月（含本月剩余），YYYY-MM */
+  months: string[]
+  /** 按市值降序的桶 */
+  buckets: PanoramaBucket[]
 }

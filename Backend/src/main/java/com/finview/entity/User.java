@@ -3,6 +3,7 @@ package com.finview.entity;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -40,4 +41,10 @@ public class User {
      * SeriesService.advance 拿它当水位：只补「这个时间之后到今天」的新行，当天重复登录直接跳过。
      */
     private LocalDateTime updateSeriesTime;
+
+    /**
+     * 每月固定新增（元）：「定投分析」页手工维护的现金流假设，只由 CashFlowService 读写，
+     * 与登录 / 序列推进完全无关。NULL = 用户还没设置（页面显示「未设置」，预测按 0 计）。
+     */
+    private BigDecimal monthlyInflow;
 }

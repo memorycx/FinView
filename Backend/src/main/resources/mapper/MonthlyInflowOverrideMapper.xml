@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.finview.mapper.MonthlyInflowOverrideMapper">
+
+    <sql id="baseColumns">
+        id, user_id, month, amount, create_time, update_time
+    </sql>
+
+    <select id="findByUser" resultType="MonthlyInflowOverride">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM `monthly_inflow_override`
+        WHERE user_id = #{userId}
+        ORDER BY `month`
+    </select>
+
+    <!-- 单月覆盖的写入：靠 (user_id, month) 唯一键命中冲突后更新金额。
+         create_time 只在首次插入时写，update_time 由表定义自动刷 -->
+    <insert id="upsert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `monthly_inflow_override` (user_id, `month`, amount)
+        VALUES (#{userId}, #{month}, #{amount})
+        ON DUPLICATE KEY UPDATE amount = VALUES(amount)
+    </insert>
+
+    <!-- 删除覆盖行 = 恢复默认值（不要把 amount 写成 0 顶替：0 是「这个月收入为零」） -->
+    <delete id="deleteByUserAndMonth">
+        DELETE FROM `monthly_inflow_override`
+        WHERE user_id = #{userId}
+          AND `month` = #{month}
+    </delete>
+
+</mapper>

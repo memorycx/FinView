@@ -3,6 +3,7 @@ package com.finview.mapper;
 import com.finview.entity.User;
 import org.apache.ibatis.annotations.Param;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -32,4 +33,10 @@ public interface UserMapper {
      * 与用户资料更新是两条互不相干的路径。
      */
     int touchUpdateSeriesTime(@Param("id") Long id, @Param("updateSeriesTime") LocalDateTime updateSeriesTime);
+
+    /**
+     * 写「每月固定新增」（定投分析页的现金流假设）。单独一条语句，与序列水位、用户资料更新
+     * 互不相干：只在用户显式保存时执行。monthlyInflow 传 null = 清空（页面回到「未设置」）。
+     */
+    int updateMonthlyInflow(@Param("id") Long id, @Param("monthlyInflow") BigDecimal monthlyInflow);
 }

@@ -57,7 +57,11 @@ public class SavingsPlanRequest {
     @NotNull(message = "开始日期不能为空")
     private LocalDate startDate;
 
-    /** 计划目标日期，仅在设了目标金额时必填（跨字段规则在 service 里判） */
+    /**
+     * 计划目标日期，**选填**（2026-10-13 起）：设了目标金额但没填时，
+     * 后端按「每月计划投入」自适应推算（份数 = ⌈目标金额 ÷ 每月存入⌉，从开始日期往后推，见
+     * SavingsService.estimatedTargetDate）并把推出来的日子落库；填了的话不能早于开始日期。
+     */
     private LocalDate targetDate;
 
     /** 每月计划投入，仅在设了目标金额时必填（用于推算预计完成时间） */

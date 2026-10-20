@@ -25,15 +25,17 @@ const emit = defineEmits<{
 const BUCKET_LABELS: Record<AllocationBucket, string> = {
   equityFund: '股基',
   bondFund: '债基',
+  moneyFund: '货基',
   stock: '股票',
   bond: '债券',
   cash: '现金',
 }
 
-/** 分类筛选：桶 key 与后端 AssetService.bucketOf 同口径（基金按 asset_type 细分） */
+/** 分类筛选：桶 key 与后端 AssetService.bucketOf 同口径（基金按 asset_type 细分，未标注按股基算） */
 function matchesBucket(f: Fund, bucket: AllocationBucket) {
   if (bucket === 'bondFund') return f.category === 'fund' && f.assetType === 'bond'
-  if (bucket === 'equityFund') return f.category === 'fund' && f.assetType !== 'bond'
+  if (bucket === 'moneyFund') return f.category === 'fund' && f.assetType === 'money'
+  if (bucket === 'equityFund') return f.category === 'fund' && f.assetType !== 'bond' && f.assetType !== 'money'
   return f.category === bucket
 }
 

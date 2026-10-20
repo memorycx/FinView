@@ -61,6 +61,7 @@ const totalAssets = computed(() => summary.value?.totalAssets ?? 0)
 const palette: Record<AllocationBucket, string> = {
   equityFund: '--chart-1',
   bondFund: '--chart-2',
+  moneyFund: '--chart-6',
   stock: '--chart-3',
   bond: '--chart-4',
   cash: '--chart-5',
@@ -76,18 +77,31 @@ watch(isDark, async () => {
 const data = computed(() =>
   allocation.value.map((a) => ({
     ...a,
-    // 列表用短名（股基/债基），后端 label 保持全称不动
-    label: a.category === 'equityFund' ? '股基' : a.category === 'bondFund' ? '债基' : a.label,
+    // 列表用短名（股基/债基/货基），后端 label 保持全称不动
+    label:
+      a.category === 'equityFund'
+        ? '股基'
+        : a.category === 'bondFund'
+          ? '债基'
+          : a.category === 'moneyFund'
+            ? '货基'
+            : a.label,
     colorVar: palette[a.category],
     clickable: hasFunds(a.category),
   })),
 )
 
-/** 该分类里有没有能上排行榜的基金：只有股基/债基有，股票/债券/现金不做交互暗示 */
+/**
+ * 该分类里有没有能上排行榜的基金：只有基金桶有，股票/债券/现金不做交互暗示。
+ * equityFund 连「没标过」（null）一起收 —— 与后端 bucketOf 的兜底一致（未标注按股基算）。
+ */
 function hasFunds(bucket: AllocationBucket): boolean {
-  return (currentFunds.value ?? []).some((f) =>
-    bucket === 'bondFund' ? f.assetType === 'bond' : bucket === 'equityFund' ? f.assetType !== 'bond' : false,
-  )
+  return (currentFunds.value ?? []).some((f) => {
+    if (bucket === 'bondFund') return f.assetType === 'bond'
+    if (bucket === 'moneyFund') return f.assetType === 'money'
+    if (bucket === 'equityFund') return !f.assetType || f.assetType === 'equity'
+    return false
+  })
 }
 
 function pick(bucket: AllocationBucket) {
@@ -191,19 +205,19 @@ const top3Share = computed(() =>
 )
 
 /**
- * 安全资金 = asset_type 为 bond（债基）/ cash（现金）的市值合计，由后端算好（跟 totalAssets 同一份
- * 未归档口径）。不按 category 猜：基金在库里都是 category='fund'，股基/债基看 asset.asset_type，
- * 环形图里「债券基金」那一块与它同源（AssetService.bucketOf）。
+ * 安全资金 = asset_type 为 bond（债基）/ money（货币基金）/ cash（现金）的市值合计，由后端算好
+ * （跟 totalAssets 同一份未归档口径）。不按 category 猜：基金在库里都是 category='fund'，
+ * 细分看 asset.asset_type，环形图里「债券基金 / 货币基金」那两块与它同源（AssetService.bucketOf）。
  */
 const safeFunds = computed(() => summary.value?.safeAssets ?? 0)
 
-/** 安全资金包含的资产项：债基 + 现金（现金不在 /funds 里，从 allocation 的 cash 桶取） */
+/** 安全资金包含的资产项：债基 + 货币基金 + 现金（现金不在 /funds 里，从 allocation 的 cash 桶取） */
 const safeHoldings = computed<HoldingItem[]>(() => {
-  const bonds = (currentFunds.value ?? [])
-    .filter((f) => f.assetType === 'bond')
+  const safeFundRows = (currentFunds.value ?? [])
+    .filter((f) => f.assetType === 'bond' || f.assetType === 'money')
     .map((f) => ({ name: f.name, value: f.current }))
   const cash = allocation.value.find((a) => a.category === 'cash')?.value ?? 0
-  return [...bonds, { name: '现金', value: cash }]
+  return [...safeFundRows, { name: '现金', value: cash }]
     .filter((item) => item.value !== 0)
     .sort((a, b) => b.value - a.value)
 })

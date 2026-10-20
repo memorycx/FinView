@@ -37,10 +37,8 @@ async function handleLogin() {
     <div class="w-full max-w-sm">
       <!-- Logo & Title -->
       <div class="text-center mb-8">
-        <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 text-primary mb-4">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
-        </div>
-        <h1 class="text-2xl font-semibold tracking-tight">FinView</h1>
+        <img src="/icon.svg" alt="" class="mx-auto mb-4 size-14 rounded-2xl" />
+        <h1 class="text-2xl font-semibold tracking-tight">蓝序</h1>
         <p class="text-sm text-muted-foreground mt-1">登录你的账户</p>
       </div>
 

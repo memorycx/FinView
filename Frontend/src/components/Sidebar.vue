@@ -2,11 +2,12 @@
 import { computed } from 'vue'
 import type { Component } from 'vue'
 import {
+  Boxes,
+  ChartColumnIncreasing,
   ChevronsLeft,
   ChevronsRight,
   LayoutDashboard,
   LogOut,
-  Pencil,
   Sparkles,
   Target,
   Wallet,
@@ -28,7 +29,8 @@ const navItems: { key: string; label: string; icon: Component; to: string }[] = 
   { key: 'dashboard', label: '投资看板', icon: LayoutDashboard, to: '/' },
   { key: 'assets', label: '我的资产', icon: Wallet, to: '/assets' },
   { key: 'savings', label: '存钱计划', icon: Target, to: '/savings' },
-  { key: 'entry', label: '录入数据', icon: Pencil, to: '/entry' },
+  { key: 'dca', label: '定投分析', icon: ChartColumnIncreasing, to: '/dca' },
+  { key: 'panorama', label: '资金全景', icon: Boxes, to: '/panorama' },
   { key: 'ai', label: 'AI 收益解读', icon: Sparkles, to: '/ai' },
 ]
 
@@ -87,13 +89,10 @@ const avatarLetter = computed(() => {
       :class="rail ? 'lg:justify-center lg:px-0' : 'lg:px-4'"
     >
       <div class="flex items-center gap-3">
-        <div
-          class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand text-brand-foreground"
-        >
-          <span class="font-mono text-lg font-bold">盈</span>
-        </div>
+        <!-- 品牌标：icon.svg 自带深蓝底与圆角，外面不要再套 bg-brand -->
+        <img src="/icon.svg" alt="" class="size-10 shrink-0 rounded-xl" />
         <div v-show="!rail" class="lg:whitespace-nowrap">
-          <p class="text-lg font-semibold leading-none">盈析</p>
+          <p class="text-lg font-semibold leading-none">蓝序</p>
           <p class="mt-1 text-xs text-muted-foreground">理财数据分析看板</p>
         </div>
       </div>

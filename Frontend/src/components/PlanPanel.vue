@@ -7,7 +7,7 @@ import CardContent from '@/components/ui/card/CardContent.vue'
 import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
 import PlanDetail from '@/components/PlanDetail.vue'
-import AdjustmentForm from '@/components/AdjustmentForm.vue'
+import EntryDialog from '@/components/EntryDialog.vue'
 import { formatCNY, formatPct, frequencyLabel, returnRate } from '@/lib/finance'
 import type { AssetCategory, Fund } from '@/api/types'
 
@@ -35,12 +35,15 @@ const categoryLabels: Record<AssetCategory, string> = {
 }
 
 /**
- * 徽标文案：基金不再显示笼统的「基金」，按 asset_type 细分（与「我的资产」的股票基金/债券基金两个桶同口径）；
+ * 徽标文案：基金不再显示笼统的「基金」，按 asset_type 细分（与「我的资产」的
+ * 股票基金 / 债券基金 / 货币基金三个桶同口径）；
  * 未标注（null，存量没标过的）按股票基金显示；其余大类仍走 categoryLabels。
  */
 function badgeLabel(fund: Fund): string {
   if (fund.category !== 'fund') return categoryLabels[fund.category]
-  return fund.assetType === 'bond' ? '债券基金' : '股票基金'
+  if (fund.assetType === 'bond') return '债券基金'
+  if (fund.assetType === 'money') return '货币基金'
+  return '股票基金'
 }
 
 /** tab 与归档与否一一对应：持有中 = 未归档（含定投已结束的，行内标「已停止」） */
@@ -54,10 +57,10 @@ const selected = computed(
   () => list.value.find((f) => f.id === props.selectedId) ?? null,
 )
 
-/** 列表底部的「添加资产」表单是否展开（新用户没有任何计划时也能从这里录入第一条） */
+/** 列表底部「添加资产」的录入弹窗是否打开（新用户没有任何计划时也能从这里录入第一条） */
 const adding = ref(false)
 
-/** 新资产保存成功：关表单，父级重拉计划列表与组合走势（后端已重算序列） */
+/** 录入成功：关弹窗，父级重拉计划列表与组合走势（后端已重算序列） */
 function handleAdded() {
   adding.value = false
   emit('generated')
@@ -186,15 +189,10 @@ const tabs = [
       <!--
         添加资产：挂在持有中列表的最下面（归档 tab 不显示 —— 新增的资产一定未归档，
         在归档页添加会「点完什么也没出现」）。新用户没有任何数据时，这里是唯一的录入入口。
+        点击打开录入弹窗（原「录入数据」整页的那张表单，见 EntryDialog），提交成功自动关闭并刷新。
       -->
       <template v-if="tab === 'active'">
-        <AdjustmentForm
-          v-if="adding"
-          :code="null"
-          :record="null"
-          @saved="handleAdded"
-          @cancel="adding = false"
-        />
+        <EntryDialog v-if="adding" @saved="handleAdded" @close="adding = false" />
         <button
           v-else
           type="button"

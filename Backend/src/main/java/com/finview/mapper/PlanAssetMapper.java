@@ -1,5 +1,6 @@
 package com.finview.mapper;
 
+import com.finview.entity.AssetPlanLink;
 import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
@@ -17,6 +18,15 @@ public interface PlanAssetMapper {
 
     /** 某计划关联的资产 id，按资产 code 排序（调用方据此让配色轮转稳定） */
     List<Long> findAssetIdsByPlan(@Param("userId") Long userId, @Param("planId") Long planId);
+
+    /**
+     * 某用户全部「资产 → 所属计划」关联（带计划名）。
+     * 2026-10-13 起资产与具体计划一一对应，所以每个资产至多一条；候选接口用它标注「已在『X』里」。
+     */
+    List<AssetPlanLink> findLinksByUser(@Param("userId") Long userId);
+
+    /** 单个资产所属的计划（带计划名）；没有关联返回 null —— 关联前的排他校验用 */
+    AssetPlanLink findLinkByAsset(@Param("userId") Long userId, @Param("assetId") Long assetId);
 
     /**
      * 关联一个资产。唯一键 (plan_id, asset_id) 挡重复，用 INSERT IGNORE，

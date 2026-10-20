@@ -13,6 +13,7 @@
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
   --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
@@ -21,6 +22,8 @@
   --color-brand-foreground: var(--brand-foreground);
   --color-gain: var(--gain);
   --color-loss: var(--loss);
+  --color-flow-in: var(--flow-in);
+  --color-flow-out: var(--flow-out);
   --font-sans: 'Geist Variable', 'PingFang SC', 'Hiragino Sans GB',
     'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans CJK SC',
     'Noto Sans SC', system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -77,11 +80,18 @@
   --brand-foreground: #FFFFFF;
   --gain: oklch(0.53 0.21 22);
   --loss: oklch(0.55 0.12 155);
+  /* 定投分析的现金流配色：**故意不复用 --gain / --loss** —— 那两个是 A 股涨跌约定
+     （涨=红、跌=绿），这里的深蓝/浅蓝表示「现金流入 / 现金流出」，语义完全不同；
+     两色取自产品图表蓝色梯度（深=流入，浅=流出），与整体设计风格统一 */
+  --flow-in: #1E6091;
+  --flow-out: #61A5C2;
   --chart-1: #1E6091;
   --chart-2: #61A5C2;
   --chart-3: #468FAF;
   --chart-4: #89C2D9;
   --chart-5: #A9D6E5;
+  /* 第 6 档（货币基金桶用）：比 chart-1 更深一档，白底上仍分得清 */
+  --chart-6: #144D6E;
   --radius: 0.75rem;
   --sidebar: #F5FAFD;
   --sidebar-foreground: #0A2540;
@@ -117,11 +127,14 @@
   --brand-foreground: #0A2540;
   --gain: oklch(0.68 0.185 22);
   --loss: oklch(0.7 0.13 158);
+  --flow-in: #61A5C2;
+  --flow-out: #A9D6E5;
   --chart-1: #61A5C2;
   --chart-2: #468FAF;
   --chart-3: #89C2D9;
   --chart-4: #A9D6E5;
   --chart-5: #2A6F97;
+  --chart-6: #CDE8F2;
   --sidebar: #103156;
   --sidebar-foreground: #A9D6E5;
   --sidebar-primary: #61A5C2;
@@ -157,11 +170,14 @@
     --brand-foreground: #0A2540;
     --gain: oklch(0.68 0.185 22);
     --loss: oklch(0.7 0.13 158);
+    --flow-in: #61A5C2;
+    --flow-out: #A9D6E5;
     --chart-1: #61A5C2;
     --chart-2: #468FAF;
     --chart-3: #89C2D9;
     --chart-4: #A9D6E5;
     --chart-5: #2A6F97;
+    --chart-6: #CDE8F2;
     --sidebar: #103156;
     --sidebar-foreground: #A9D6E5;
     --sidebar-primary: #61A5C2;

@@ -37,7 +37,7 @@ class CashLedgerTest {
         return event;
     }
 
-    /** 基金序列行：amount 是扣费后净额（买入为正、卖出一笔支出为负），fee 单列 */
+    /** 基金序列行：amount 是扣费后净额（买入为正、卖出为负），fee 单列 */
     private static AssetSeries row(String code, String day, String amount, String fee) {
         return new AssetSeries(7L, code, LocalDate.parse(day),
                 new BigDecimal(amount), new BigDecimal(fee), BigDecimal.ZERO, BigDecimal.ZERO);
@@ -106,7 +106,7 @@ class CashLedgerTest {
     }
 
     @Test
-    @DisplayName("卖出一笔支出是流入：amount 为负、fee 为 0")
+    @DisplayName("卖出是流入：amount 为负、fee 为 0")
     void sellAddsCashBack() {
         BigDecimal balance = CashLedger.balance(
                 List.of(cashEvent("2026-10-01", 3, "1000")),

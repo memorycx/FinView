@@ -16,7 +16,7 @@ import java.util.List;
  *
  * allocation 恒返回五个展示桶（股票基金/债券基金/股票/债券/现金），没有持仓的为 0，
  * 前端按 category 取色并直接渲染五行图例，缺行会导致图例缺项。
- * 基金不再单独成桶：按 asset.asset_type 细分成 equityFund / bondFund（未标注按股票基金算）。
+ * 基金不再单独成桶：按 asset.asset_type 细分成 equityFund / bondFund / moneyFund（未标注按股票基金算）。
  */
 @Data
 @NoArgsConstructor
@@ -27,7 +27,7 @@ public class AssetSummaryResponse {
     private BigDecimal totalAssets;
 
     /**
-     * 安全资金（元）= asset_type 为 bond（债基）或 cash（现金）的资产市值合计。
+     * 安全资金（元）= asset_type 为 bond（债基）/ money（货币基金）/ cash（现金）的资产市值合计。
      * 口径与 allocation 一致（只算未归档）；未标注类型（NULL）按股票基金算，同样是非安全。
      * 「我的资产」页的安全资金占比 = safeAssets / totalAssets，由前端算（占比展示口径在前端）。
      */
@@ -43,7 +43,7 @@ public class AssetSummaryResponse {
     public static class AllocationResponse {
 
         /**
-         * 展示桶 key：equityFund / bondFund / stock / bond / cash，
+         * 展示桶 key：equityFund / bondFund / moneyFund / stock / bond / cash，
          * **不是 asset.category 原值**——基金按 asset_type 细分后派生出来的（见 AssetService.bucketOf）。
          */
         private String category;

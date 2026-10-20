@@ -37,6 +37,12 @@ public class PlanAdjustmentResponse {
     /** 调整后的每期定投金额，null 表示停止定投 */
     private BigDecimal amount;
 
+    /**
+     * 是否从下一交易日起生效（只有 action=1 的「调整定投」可能为 true）。
+     * 前端据此在时间线行上显示「次一交易日起生效」徽标。
+     */
+    private Boolean deferred;
+
     /** 备注 */
     private String note;
 }

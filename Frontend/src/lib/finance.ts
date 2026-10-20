@@ -22,6 +22,17 @@ export function frequencyLabel(freq: InvestFrequency) {
   return { daily: '日投', weekly: '周投', monthly: '月投' }[freq]
 }
 
+/**
+ * 调整记录的动作文案（时间线显示用）。
+ * 后端 SeriesService 生成的 action=3 / 4 文案已经是「买入 / 卖出」；
+ * 这里兼容尚未重启的旧后端（仍返回「一笔收入 / 一笔支出」），重启后这两条分支自然不再命中。
+ */
+export function adjustmentActionLabel(action: string) {
+  if (action === '一笔收入') return '买入'
+  if (action === '一笔支出') return '卖出'
+  return action
+}
+
 /* ==================== 时间格式化 ==================== */
 
 /**
@@ -113,4 +124,29 @@ export function savingsEstimatedDate(
   const d = new Date()
   d.setMonth(d.getMonth() + monthsNeeded)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+/**
+ * 新建计划时「目标日期」留空的自适应推算（**口径与后端 SavingsService.estimatedTargetDate 一字不差**）：
+ * 份数 = ⌈目标金额 ÷ 每月存入⌉（至少 1、上限 100 年），从开始日期往后推 N 个月，日期不足时往回调
+ * （10-31 + 4 个月 → 02-28，与 Java LocalDate.plusMonths 的语义一致，别用 Date.setMonth 直接加——
+ * 它会溢出成 03-02/03-03）。
+ *
+ * 只用于表单里的实时预览；真正落库的日期以后端算的为准。
+ */
+export function targetDateFromMonthly(
+  startDate: string,
+  targetAmount: number,
+  monthlyPlanAmount: number,
+): string {
+  if (!startDate || !(targetAmount > 0) || !(monthlyPlanAmount > 0)) return ''
+  const [year, month, day] = startDate.split('-').map(Number)
+  const months = Math.min(1200, Math.max(1, Math.ceil(targetAmount / monthlyPlanAmount)))
+  const shifted = new Date(year, month - 1, 1)
+  shifted.setMonth(shifted.getMonth() + months)
+  const targetYear = shifted.getFullYear()
+  const targetMonth = shifted.getMonth()
+  const lastDay = new Date(targetYear, targetMonth + 1, 0).getDate()
+  const dd = String(Math.min(day, lastDay)).padStart(2, '0')
+  return `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}-${dd}`
 }

@@ -35,7 +35,7 @@ public class AssetSeries {
     /** 日期，每个 code 从首个事件当天起逐日连续 */
     private LocalDate day;
 
-    /** 当日净投入 = 当日周期扣款 + 一笔收入 − 一笔支出，支出会写成负数 */
+    /** 当日净投入 = 当日周期扣款 + 买入 − 卖出，卖出会写成负数 */
     private BigDecimal amount;
 
     /** 当日手续费 = 当日各笔买入手续费之和（卖出为 0）；累计手续费 = Σfee */

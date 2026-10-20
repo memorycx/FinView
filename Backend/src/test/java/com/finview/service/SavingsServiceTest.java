@@ -1,19 +1,27 @@
 package com.finview.service;
 
 import com.finview.common.BusinessException;
+import com.finview.controller.dto.SavingsAssetResponse;
+import com.finview.controller.dto.SavingsInflowForecastResponse;
 import com.finview.controller.dto.SavingsPlanRequest;
+import com.finview.entity.AssetPlanLink;
 import com.finview.entity.SavingPlan;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.YearMonth;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * 存钱计划的纯逻辑测试（不启 Spring、不碰 mapper）。
@@ -81,13 +89,20 @@ class SavingsServiceTest {
     }
 
     @Test
-    @DisplayName("未知类型报 400（不是 asset / wish 一律拒绝）")
-    void rejectsUnknownType() {
-        for (String bad : List.of("saving", "ASSET", "wishes", "", " ")) {
+    @DisplayName("类型必须在该用户的类型表里：内置与自定义都能过，表外的（含大小写不同/空值）报 400")
+    void requireKnownType() {
+        Set<String> known = Set.of("asset", "life", "wish", "c8f3a1b2");
+        // 内置三种与自定义 code 都合法
+        assertDoesNotThrow(() -> SavingsService.requireKnownType(known, "asset"));
+        assertDoesNotThrow(() -> SavingsService.requireKnownType(known, "c8f3a1b2"));
+
+        for (String bad : List.of("saving", "ASSET", "wishes", "")) {
             BusinessException ex = assertThrows(BusinessException.class,
-                    () -> SavingsService.validateNewPlan(List.of(), request(bad, "2026-10-05", "2027-10-05")));
+                    () -> SavingsService.requireKnownType(known, bad), bad);
             assertEquals(400, ex.getCode());
         }
+        // null 也拒绝（请求没带 type）
+        assertThrows(BusinessException.class, () -> SavingsService.requireKnownType(known, null));
     }
 
     @Test
@@ -103,10 +118,39 @@ class SavingsServiceTest {
     @Test
     @DisplayName("校验按「类型 → 唯一性 → 日期」的顺序，先撞上哪条报哪条")
     void reportsFirstViolation() {
-        // 类型非法 + 已有总资产计划 + 日期倒挂：应报类型（说明短路在前，不会去 stream existing）
+        // 类型必须是用户类型表里的 code，这一步在 create() 里（要查库），所以单独测：
+        // 类型不在表里时先报类型，不会继续往下走到唯一性 / 日期
+        BusinessException badType = assertThrows(BusinessException.class,
+                () -> SavingsService.requireKnownType(Set.of("asset", "life", "wish"), "bogus"));
+        assertEquals("计划类型不存在，请先在类型里新建：bogus", badType.getMessage());
+
+        // 类型合法时，唯一性先于日期：已有总资产计划 + 日期倒挂 → 报唯一性
         BusinessException ex = assertThrows(BusinessException.class,
-                () -> SavingsService.validateNewPlan(List.of(existing("asset")), request("bogus", "2026-10-05", "2020-01-01")));
-        assertEquals("计划类型只能是 asset（总资产）、life（生活保障）或 wish（愿望）", ex.getMessage());
+                () -> SavingsService.validateNewPlan(List.of(existing("asset")), request("asset", "2026-10-05", "2020-01-01")));
+        assertEquals("已有总资产计划，只能新建生活保障或愿望", ex.getMessage());
+    }
+
+    /* ==================== 资产只能属于一个具体分类（排他） ==================== */
+
+    @Test
+    @DisplayName("排他：资产已经在别的计划里 → 400；没有归属、或就是本计划 → 放行")
+    void requiresAssetNotInOtherPlan() {
+        AssetPlanLink inOther = new AssetPlanLink();
+        inOther.setPlanId(9L);
+        inOther.setPlanName("养老金");
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> SavingsService.requireAssetNotInOtherPlan(14L, "华夏沪深300", inOther));
+        assertEquals(400, ex.getCode());
+        assertEquals("「华夏沪深300」已经在「养老金」里了，一个资产只能属于一个分类", ex.getMessage());
+
+        // 没有归属（null）→ 放行
+        assertDoesNotThrow(() -> SavingsService.requireAssetNotInOtherPlan(14L, "华夏沪深300", null));
+
+        // 就是本计划（重复关联，幂等）→ 也放行
+        AssetPlanLink inSelf = new AssetPlanLink();
+        inSelf.setPlanId(14L);
+        inSelf.setPlanName("养老金");
+        assertDoesNotThrow(() -> SavingsService.requireAssetNotInOtherPlan(14L, "华夏沪深300", inSelf));
     }
 
     /* ==================== 计划里包含哪些资产（selectAssets） ==================== */
@@ -165,17 +209,37 @@ class SavingsServiceTest {
     }
 
     @Test
-    @DisplayName("设了目标金额就必须有目标日期和每月计划投入")
-    void requiresDateAndMonthlyWhenTargetPresent() {
+    @DisplayName("设了目标金额就必须有每月计划投入；目标日期选填")
+    void requiresMonthlyWhenTargetPresent() {
+        // 目标日期不填是合法的：create() 会按每月存入自适应推算
         SavingsPlanRequest noDate = request("wish", "2026-10-05", "2027-10-05");
         noDate.setTargetDate(null);
-        assertEquals("设了目标金额就要填目标日期",
-                assertThrows(BusinessException.class, () -> SavingsService.validateNewPlan(List.of(), noDate)).getMessage());
+        assertDoesNotThrow(() -> SavingsService.validateNewPlan(List.of(), noDate));
 
         SavingsPlanRequest noMonthly = request("wish", "2026-10-05", "2027-10-05");
         noMonthly.setMonthlyPlanAmount(null);
         assertEquals("设了目标金额就要填每月计划投入",
                 assertThrows(BusinessException.class, () -> SavingsService.validateNewPlan(List.of(), noMonthly)).getMessage());
+    }
+
+    @Test
+    @DisplayName("目标日期自适应推算：按每月存入向上取整，从开始日期往后推；一个月内能存完也推 1 个月")
+    void estimatedTargetDate() {
+        // 10000 ÷ 3000 = 3.33 → 4 个月
+        assertEquals(LocalDate.parse("2027-02-05"), SavingsService.estimatedTargetDate(
+                LocalDate.parse("2026-10-05"), new BigDecimal("10000"), new BigDecimal("3000")));
+        // 8000 ÷ 800 = 10 个月，正好整除
+        assertEquals(LocalDate.parse("2027-08-05"), SavingsService.estimatedTargetDate(
+                LocalDate.parse("2026-10-05"), new BigDecimal("8000"), new BigDecimal("800")));
+        // 目标比每月存入还小 → 至少推 1 个月（推 0 会得到"当天就该完成"）
+        assertEquals(LocalDate.parse("2026-11-05"), SavingsService.estimatedTargetDate(
+                LocalDate.parse("2026-10-05"), new BigDecimal("500"), new BigDecimal("3000")));
+        // 跨年 + 每月 31 号这类边界由 plusMonths 自己处理（10-31 + 4 个月 → 2 月只有 28 天，取 02-28）
+        assertEquals(LocalDate.parse("2027-02-28"), SavingsService.estimatedTargetDate(
+                LocalDate.parse("2026-10-31"), new BigDecimal("4000"), new BigDecimal("1000")));
+        // 每月存入填得极小也不会推出天文数字年份（上限 100 年）
+        assertEquals(LocalDate.parse("2126-10-05"), SavingsService.estimatedTargetDate(
+                LocalDate.parse("2026-10-05"), new BigDecimal("100000"), new BigDecimal("0.01")));
     }
 
     @Test
@@ -263,5 +327,106 @@ class SavingsServiceTest {
         assertEquals(0, new BigDecimal("800").compareTo(stats.getPrincipal()));
         assertEquals(0, new BigDecimal("800").compareTo(stats.getInvested()));
         assertEquals(0, BigDecimal.ZERO.compareTo(stats.getFee()));
+    }
+
+    @Test
+    @DisplayName("returnStatsByCode：逐只分开给（现金不在内），合并回来与 returnStats 完全一致")
+    void perAssetStatsMatchesAggregate() {
+        var assets = List.of(asset(1, "000051", false), asset(2, "161725", false), asset(3, "CASH", false));
+        var rows = List.of(
+                last("000051", "2026-02-01", "500", "0.6", "1500", "1600"),
+                last("161725", "2026-01-15", "2000", "0", "3000", "3300"));
+        var totals = java.util.Map.of("CASH", new BigDecimal("5000"));
+
+        var byCode = SavingsService.returnStatsByCode(assets, rows, totals);
+        // 现金没有四件套（详情接口里它就是 null，前端显示「—」）
+        assertEquals(Set.of("000051", "161725"), byCode.keySet());
+
+        var fund = byCode.get("000051");
+        assertEquals(0, new BigDecimal("1600").compareTo(fund.getCurrent()));
+        assertEquals(0, new BigDecimal("1500").compareTo(fund.getPrincipal()));
+        assertEquals(0, new BigDecimal("0.6").compareTo(fund.getFee()));
+        assertEquals(0, new BigDecimal("500.6").compareTo(fund.getInvested()));
+
+        // 详情接口整体那份走的就是「逐只算完再相加」，两边必须一字不差
+        var sum = SavingsService.sumStats(byCode);
+        var aggregate = SavingsService.returnStats(assets, rows, totals);
+        assertEquals(0, aggregate.getCurrent().compareTo(sum.getCurrent()));
+        assertEquals(0, aggregate.getPrincipal().compareTo(sum.getPrincipal()));
+        assertEquals(0, aggregate.getFee().compareTo(sum.getFee()));
+        assertEquals(0, aggregate.getInvested().compareTo(sum.getInvested()));
+    }
+
+    /* ==================== 计划详情：定投标记 + 未来流入 ==================== */
+
+    @Test
+    @DisplayName("applyDca：定投中的排前面，组内保持原顺序，颜色跟着资产走")
+    void applyDcaSortsActiveFirst() {
+        var a = assetResponse("A", "--chart-1");
+        var b = assetResponse("B", "--chart-3");
+        var c = assetResponse("C", "--chart-4");
+        var d = assetResponse("D", "--chart-5");
+        var assets = new java.util.ArrayList<>(List.of(a, b, c, d));
+
+        var active = new CashFlowService.PlanDca(true, "weekly", new BigDecimal("100"),
+                Map.of(YearMonth.of(2026, 11), new BigDecimal("100")));
+        var inactive = new CashFlowService.PlanDca(false, null, null, Map.of());
+        SavingsService.applyDca(assets, Map.of("B", active, "D", active, "A", inactive, "C", inactive));
+
+        assertEquals(List.of("B", "D", "A", "C"),
+                assets.stream().map(SavingsAssetResponse::getCode).toList());
+        // 颜色在 toAssets 里按原顺序分配，排序后仍跟着资产走
+        assertEquals("--chart-3", assets.get(0).getColorVar());
+        assertEquals("--chart-5", assets.get(1).getColorVar());
+        assertTrue(assets.get(0).getDcaActive());
+        assertNull(assets.get(2).getDcaFrequency());
+    }
+
+    @Test
+    @DisplayName("buildForecast：只把有金额的资产放进图例，12 个月全下发，byAsset 不放 0")
+    void buildsInflowForecast() {
+        var a = assetResponse("A", "--chart-1");
+        var b = assetResponse("B", "--chart-3");
+        var c = assetResponse("C", "--chart-4");
+        var assets = List.of(a, b, c);
+
+        Map<YearMonth, BigDecimal> aOutlay = new LinkedHashMap<>();
+        aOutlay.put(YearMonth.of(2026, 11), new BigDecimal("100"));
+        aOutlay.put(YearMonth.of(2026, 12), new BigDecimal("200"));
+        var aDca = new CashFlowService.PlanDca(true, "weekly", new BigDecimal("100"), aOutlay);
+        var bDca = new CashFlowService.PlanDca(false, null, null, Map.of());
+        // C 今天还没开始定投，但窗口内有未来扣款 —— 也要进图例
+        var cDca = new CashFlowService.PlanDca(false, null, null,
+                Map.of(YearMonth.of(2027, 1), new BigDecimal("300")));
+
+        var forecast = SavingsService.buildForecast(assets,
+                Map.of("A", aDca, "B", bDca, "C", cDca),
+                LocalDate.parse("2026-11-01"), LocalDate.parse("2027-10-31"));
+
+        assertEquals("2026-11", forecast.getFromMonth());
+        assertEquals("2027-10", forecast.getToMonth());
+        assertEquals(12, forecast.getMonths().size());
+        // B 没有金额，不进图例；C 未来才开始，要进去
+        assertEquals(List.of("A", "C"), forecast.getAssets().stream()
+                .map(SavingsInflowForecastResponse.AssetResponse::getCode).toList());
+
+        var november = forecast.getMonths().get(0);
+        assertEquals("2026-11", november.getMonth());
+        assertEquals(0, new BigDecimal("100").compareTo(november.getTotal()));
+        assertEquals(0, new BigDecimal("100").compareTo(november.getByAsset().get("A")));
+        assertNull(november.getByAsset().get("C"));
+
+        var january = forecast.getMonths().get(2);
+        assertEquals(0, new BigDecimal("300").compareTo(january.getByAsset().get("C")));
+        assertEquals(0, new BigDecimal("300").compareTo(january.getTotal()));
+
+        var february = forecast.getMonths().get(3);
+        assertEquals(0, BigDecimal.ZERO.compareTo(february.getTotal()));
+        assertTrue(february.getByAsset().isEmpty());
+    }
+
+    private static SavingsAssetResponse assetResponse(String code, String colorVar) {
+        return new SavingsAssetResponse(code, code, code, BigDecimal.ZERO, null, colorVar,
+                null, null, null);
     }
 }

@@ -1,26 +1,34 @@
-<svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <style>
-    @media (prefers-color-scheme: light) {
-      .background { fill: black; }
-      .foreground { fill: white; }
-    }
-    @media (prefers-color-scheme: dark) {
-      .background { fill: white; }
-      .foreground { fill: black; }
-    }
-  </style>
-  <g clip-path="url(#clip0_7960_43945)">
-    <rect class="background" width="180" height="180" rx="37" />
-    <g style="transform: scale(95%); transform-origin: center">
-      <path class="foreground"
-        d="M101.141 53H136.632C151.023 53 162.689 64.6662 162.689 79.0573V112.904H148.112V79.0573C148.112 78.7105 148.098 78.3662 148.072 78.0251L112.581 112.898C112.701 112.902 112.821 112.904 112.941 112.904H148.112V126.672H112.941C98.5504 126.672 86.5638 114.891 86.5638 100.5V66.7434H101.141V100.5C101.141 101.15 101.191 101.792 101.289 102.422L137.56 66.7816C137.255 66.7563 136.945 66.7434 136.632 66.7434H101.141V53Z" />
-      <path class="foreground"
-        d="M65.2926 124.136L14 66.7372H34.6355L64.7495 100.436V66.7372H80.1365V118.47C80.1365 126.278 70.4953 129.958 65.2926 124.136Z" />
-    </g>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="蓝序">
+  <!--
+    蓝序 · 应用图标（矢量版）
+    按「深蓝渐变上涨趋势图标.png」量出来的几何手工重绘，不是描边描出来的：
+    圆角方块 1024×1024（圆角 22%）、纵向渐变底、7 个渐大的圆点 + 一条加速上扬的圆头曲线，
+    点与线共用一条沿主轴（左下 → 右上）的渐变，颜色自 #E9F7FD 过渡到 #3BA8FD。
+    改颜色：只动下面两个 linearGradient 的 stop；改节奏点：动 circles 与 path（同一套坐标）。
+  -->
   <defs>
-    <clipPath id="clip0_7960_43945">
-      <rect width="180" height="180" fill="white" />
-    </clipPath>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#032C5C"/>
+      <stop offset="1" stop-color="#00214C"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="137.3" y1="745.6" x2="906.4" y2="293.0" gradientUnits="userSpaceOnUse">
+      <stop offset="0.0" stop-color="#E9F7FD"/>
+      <stop offset="0.1415" stop-color="#C0EBFE"/>
+      <stop offset="0.2786" stop-color="#A9E3FD"/>
+      <stop offset="0.4238" stop-color="#92D9FE"/>
+      <stop offset="0.5862" stop-color="#79CDFE"/>
+      <stop offset="0.7326" stop-color="#75CAFD"/>
+      <stop offset="0.9224" stop-color="#5FBCFD"/>
+      <stop offset="1.0" stop-color="#3BA8FD"/>
+    </linearGradient>
   </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <path d="M 137.3 745.6 C 156.8 737.2, 215.6 711.4, 254.1 695.1 C 292.6 678.8, 329.6 664.9, 368.1 647.5 C 406.6 630.1, 444.6 612.2, 484.9 590.5 C 525.2 568.8, 571.0 541.7, 610.1 517.6 C 649.2 493.5, 679.1 475.8, 719.4 445.7 C 759.7 415.6, 830.0 355.4, 852.1 337.3" fill="none" stroke="url(#mark)" stroke-width="17.8" stroke-linecap="round"/>
+  <circle cx="137.3" cy="745.6" r="29.9" fill="url(#mark)"/>
+  <circle cx="254.1" cy="695.1" r="34.1" fill="url(#mark)"/>
+  <circle cx="368.1" cy="647.5" r="35.0" fill="url(#mark)"/>
+  <circle cx="484.9" cy="590.5" r="36.0" fill="url(#mark)"/>
+  <circle cx="610.1" cy="517.6" r="36.4" fill="url(#mark)"/>
+  <circle cx="719.4" cy="445.7" r="34.1" fill="url(#mark)"/>
+  <circle cx="852.1" cy="337.3" r="70.1" fill="url(#mark)"/>
 </svg>

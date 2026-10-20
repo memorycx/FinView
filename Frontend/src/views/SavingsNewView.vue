@@ -1,15 +1,23 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { Component } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowLeft, Check, Heart, Loader2, Plus, Shield, Target, Wallet } from '@lucide/vue'
+import { ArrowLeft, Check, Heart, Loader2, Plus, Shield, Tag, Target, Wallet } from '@lucide/vue'
 import Card from '@/components/ui/card/Card.vue'
 import Button from '@/components/ui/Button.vue'
 import PageFooter from '@/components/PageFooter.vue'
 import { useRequest } from '@/composables/useApi'
-import { createSavingsPlan, getNewPlanCandidates, getSavingsPlans } from '@/api'
-import { formatCNY } from '@/lib/finance'
-import type { SavingsPlanPayload, SavingsPlanType } from '@/api/types'
+import {
+  createPlanType,
+  createSavingsPlan,
+  deletePlanType,
+  getNewPlanCandidates,
+  getPlanTypes,
+  getSavingsPlans,
+  renamePlanType,
+} from '@/api'
+import { formatCNY, targetDateFromMonthly } from '@/lib/finance'
+import type { SavingsPlanPayload, SavingsPlanTypeItem } from '@/api/types'
 
 /**
  * 新建存钱计划（路由 /savings/new）。
@@ -17,7 +25,11 @@ import type { SavingsPlanPayload, SavingsPlanType } from '@/api/types'
  * 原来列表页的两个入口都指向 /savings/new，但那条路径命中的是详情页、后端按「不存在」返回 404，
  * 所以点「新建计划」只会看到「未找到该存钱计划」—— 这个页面就是把那条链路补上。
  *
- * 两条与后端一致的规则（表单先拦一道，服务端也在 SavingsService.validateNewPlan 里拦）：
+ * **类型可以自定义**（2026-10-13 起）：卡片列表来自 /savings/plan-types（内置三种由后端幂等补种），
+ * 「自定义类型」放在旁边，用户填个名字就能建；「管理类型」里能改名 / 删除。
+ * 改名只改显示名（计划里存的是 code），删除时后端会挡「还有计划在用」。
+ *
+ * 两条与后端一致的规则（表单先拦一道，服务端也在 SavingsService.create 里拦）：
  * - 「总资产」计划全账号只能有一条：列表页只把第一条 type=asset 渲染成横跨整行的大卡，
  *   多出来的在页面上根本看不见，所以已有总资产计划时这里直接禁用该选项；
  * - 目标日期不能早于开始日期。
@@ -29,11 +41,99 @@ const router = useRouter()
 const { data: existingPlans } = useRequest(() => getSavingsPlans())
 const hasAssetPlan = computed(() => (existingPlans.value ?? []).some((p) => p.type === 'asset'))
 
-const typeOptions: { value: SavingsPlanType; label: string; hint: string; icon: Component }[] = [
-  { value: 'asset', label: '总资产', hint: '全账号只能有一个，横跨列表整行', icon: Wallet },
-  { value: 'life', label: '生活保障', hint: '应急金、备用金这类', icon: Shield },
-  { value: 'wish', label: '愿望', hint: '一次旅行、一件想买的东西…', icon: Heart },
-]
+/** 类型列表（内置 + 自定义）：卡片、管理面板都用它 */
+const { data: planTypes, reload: reloadTypes } = useRequest(() => getPlanTypes())
+
+/** 内置三种类型各自的图标与说明；自定义类型用通用图标 + 「自定义类型」说明 */
+const TYPE_ICONS: Record<string, Component> = { asset: Wallet, life: Shield, wish: Heart }
+const TYPE_HINTS: Record<string, string> = {
+  asset: '全账号只能有一个，横跨列表整行',
+  life: '应急金、备用金这类',
+  wish: '一次旅行、一件想买的东西…',
+}
+
+const typeOptions = computed(() =>
+  (planTypes.value ?? []).map((type) => ({
+    value: type.code,
+    label: type.name,
+    hint: TYPE_HINTS[type.code] ?? '自定义类型',
+    icon: TYPE_ICONS[type.code] ?? Tag,
+  })),
+)
+
+/* ==================== 自定义类型：新建 / 改名 / 删除 ==================== */
+
+const addingType = ref(false)
+const newTypeName = ref('')
+const managingTypes = ref(false)
+const editingTypeId = ref<string | null>(null)
+const editingTypeName = ref('')
+const typeSaving = ref(false)
+const typeError = ref('')
+
+async function addType() {
+  const name = newTypeName.value.trim()
+  if (!name) {
+    typeError.value = '请输入类型名称'
+    return
+  }
+  typeSaving.value = true
+  typeError.value = ''
+  try {
+    const created = await createPlanType(name)
+    await reloadTypes()
+    form.value.type = created.code // 建完直接选中，省一次点击
+    addingType.value = false
+    newTypeName.value = ''
+  } catch (e) {
+    typeError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    typeSaving.value = false
+  }
+}
+
+function startEditType(type: SavingsPlanTypeItem) {
+  editingTypeId.value = type.id
+  editingTypeName.value = type.name
+  typeError.value = ''
+}
+
+async function saveTypeName(type: SavingsPlanTypeItem) {
+  const name = editingTypeName.value.trim()
+  if (!name) {
+    typeError.value = '请输入类型名称'
+    return
+  }
+  typeSaving.value = true
+  typeError.value = ''
+  try {
+    await renamePlanType(type.id, name)
+    await reloadTypes()
+    editingTypeId.value = null
+  } catch (e) {
+    typeError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    typeSaving.value = false
+  }
+}
+
+async function removeType(type: SavingsPlanTypeItem) {
+  typeSaving.value = true
+  typeError.value = ''
+  try {
+    await deletePlanType(type.id)
+    await reloadTypes()
+    // 删的正好是当前选中的类型 → 退回第一个可用的
+    if (form.value.type === type.code) {
+      form.value.type = planTypes.value?.[0]?.code ?? 'wish'
+    }
+  } catch (e) {
+    // 后端会挡「还有计划在用 / 系统类型」，把原话显示出来
+    typeError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    typeSaving.value = false
+  }
+}
 
 /** 今天 YYYY-MM-DD（开始日期默认值） */
 function today(): string {
@@ -42,7 +142,7 @@ function today(): string {
 
 const form = ref({
   name: '',
-  type: 'wish' as SavingsPlanType,
+  type: 'wish',
   targetAmount: '',
   monthlyPlanAmount: '',
   startDate: today(),
@@ -50,6 +150,14 @@ const form = ref({
   description: '',
   image: '',
   note: '',
+})
+
+// 类型列表回来后兜一道：默认的 wish 可能被用户删掉了，退回列表里第一个可用类型
+watch(planTypes, (list) => {
+  if (!list?.length) return
+  if (!list.some((type) => type.code === form.value.type)) {
+    form.value.type = list[0].code
+  }
 })
 
 /**
@@ -61,6 +169,18 @@ const hasTarget = ref(true)
 
 /** 表单里勾选的资产（只有生活保障 / 愿望用得上；总资产计划本来就全含） */
 const selectedAssetIds = ref<string[]>([])
+
+/**
+ * 「目标日期」留空时的实时预览（口径见 lib/finance.targetDateFromMonthly，与后端一致）。
+ * 只用于提示；真正落库的日期由后端算。
+ */
+const autoTargetDate = computed(() =>
+  targetDateFromMonthly(
+    form.value.startDate,
+    Number(form.value.targetAmount),
+    Number(form.value.monthlyPlanAmount),
+  ),
+)
 
 // 新建时还没有计划，用「计划无关」的候选接口
 const { data: candidates, loading: candidatesLoading } = useRequest(() => getNewPlanCandidates())
@@ -74,11 +194,12 @@ function toggleAsset(id: string) {
 const saving = ref(false)
 const error = ref('')
 
-/** 与 AdjustmentForm / EntryView 同一个字符串（项目里没有 Input 组件，各处照抄一份） */
+/** 与 AdjustmentForm / EntryDialog 同一个字符串（项目里没有 Input 组件，各处照抄一份） */
 const inputClass =
   'w-full rounded-lg border border-border bg-background px-3.5 py-2.5 text-sm transition-colors placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand disabled:opacity-50 disabled:cursor-not-allowed'
 
-function pickType(type: SavingsPlanType) {
+function pickType(type: string) {
+  // 总资产计划只能有一个；已经有的话这一项是禁用的（这里再兜一道）
   if (type === 'asset' && hasAssetPlan.value) return
   form.value.type = type
   // 总资产计划 = 「全部未归档资产」的目标，必须有目标金额；切到它时把开关顶上
@@ -99,8 +220,10 @@ async function submit() {
   if (hasTarget.value) {
     if (!(targetAmount > 0)) return (error.value = '目标金额要大于 0')
     if (!(monthlyPlanAmount > 0)) return (error.value = '每月计划存入要大于 0')
-    if (!form.value.targetDate) return (error.value = '请选择目标日期')
-    if (form.value.targetDate < form.value.startDate) return (error.value = '目标日期不能早于开始日期')
+    // 目标日期选填：留空由后端按每月存入自适应推算（这里的 autoTargetDate 只是预览）
+    if (form.value.targetDate && form.value.targetDate < form.value.startDate) {
+      return (error.value = '目标日期不能早于开始日期')
+    }
   }
 
   const payload: SavingsPlanPayload = {
@@ -110,7 +233,7 @@ async function submit() {
     // 不设目标时这三个字段整个不传：后端会落 NULL（也避免空串日期被 Jackson 判成 400）
     targetAmount: hasTarget.value ? targetAmount : undefined,
     monthlyPlanAmount: hasTarget.value ? monthlyPlanAmount : undefined,
-    targetDate: hasTarget.value ? form.value.targetDate : undefined,
+    targetDate: hasTarget.value && form.value.targetDate ? form.value.targetDate : undefined,
     // 选填字段留空传 undefined：后端把空白串一律存 null，但少传一个字段更干净
     description: form.value.description.trim() || undefined,
     image: form.value.image.trim() || undefined,
@@ -210,8 +333,80 @@ async function submit() {
             </button>
           </div>
           <p v-if="hasAssetPlan" class="text-xs text-muted-foreground">
-            已有总资产计划（一个账号只能有一个），新计划只能建生活保障或愿望。
+            已有总资产计划（一个账号只能有一个），新计划只能建其他类型。
           </p>
+
+          <!-- 自定义类型：一行按钮 + 管理面板（改名 / 删除） -->
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-2 pt-1">
+            <template v-if="!addingType">
+              <button
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-border px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-foreground/30 hover:text-foreground"
+                @click="addingType = true"
+              >
+                <Plus class="size-3.5" />
+                自定义类型
+              </button>
+            </template>
+            <template v-else>
+              <input
+                v-model="newTypeName"
+                type="text"
+                placeholder="如 旅行基金"
+                maxlength="32"
+                class="h-8 w-40 rounded-lg border border-border bg-background px-2.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand/30 focus-visible:border-brand"
+                @keyup.enter="addType"
+                @keyup.esc="addingType = false"
+              />
+              <Button size="sm" :disabled="typeSaving" @click="addType">添加</Button>
+              <Button variant="ghost" size="sm" @click="addingType = false">取消</Button>
+            </template>
+
+            <button
+              type="button"
+              class="ml-auto text-xs text-muted-foreground transition-colors hover:text-foreground"
+              @click="managingTypes = !managingTypes"
+            >
+              {{ managingTypes ? '收起管理' : '管理类型' }}
+            </button>
+          </div>
+
+          <ul v-if="managingTypes" class="divide-y divide-border rounded-xl border border-border">
+            <li v-for="type in planTypes ?? []" :key="type.id" class="flex items-center gap-2 px-3 py-2">
+              <span class="min-w-0 flex-1 truncate text-sm">{{ type.name }}</span>
+              <span v-if="type.system" class="shrink-0 text-xs text-muted-foreground">系统类型</span>
+              <template v-else-if="editingTypeId === type.id">
+                <input
+                  v-model="editingTypeName"
+                  type="text"
+                  maxlength="32"
+                  class="h-7 w-36 rounded-lg border border-border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand/30 focus-visible:border-brand"
+                  @keyup.enter="saveTypeName(type)"
+                  @keyup.esc="editingTypeId = null"
+                />
+                <Button size="xs" :disabled="typeSaving" @click="saveTypeName(type)">保存</Button>
+                <Button variant="ghost" size="xs" @click="editingTypeId = null">取消</Button>
+              </template>
+              <template v-else>
+                <button
+                  type="button"
+                  class="shrink-0 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                  @click="startEditType(type)"
+                >
+                  改名
+                </button>
+                <button
+                  type="button"
+                  class="shrink-0 text-xs text-destructive transition-colors hover:underline"
+                  :disabled="typeSaving"
+                  @click="removeType(type)"
+                >
+                  删除
+                </button>
+              </template>
+            </li>
+          </ul>
+          <p v-if="typeError" class="text-xs text-destructive">{{ typeError }}</p>
         </div>
 
         <!-- 设定目标开关：关掉就是「只看这组资产的收益」，目标金额/日期/每月存入一起消失 -->
@@ -298,7 +493,7 @@ async function submit() {
             />
           </div>
           <div v-if="hasTarget" class="space-y-2">
-            <label class="text-sm font-medium text-foreground" for="plan-target-date">目标日期 *</label>
+            <label class="text-sm font-medium text-foreground" for="plan-target-date">目标日期（选填）</label>
             <input
               id="plan-target-date"
               v-model="form.targetDate"
@@ -306,6 +501,14 @@ async function submit() {
               :disabled="saving"
               :class="inputClass"
             />
+            <!-- 留空时的实时预览：口径与后端 estimatedTargetDate 一致，真正落库的以后端算的为准 -->
+            <p class="text-xs text-muted-foreground">
+              <template v-if="form.targetDate">留空就会按每月存入自动推算，填了就按你选的日期。</template>
+              <template v-else-if="autoTargetDate">
+                按每月 {{ formatCNY(Number(form.monthlyPlanAmount) || 0) }} 推算，预计 {{ autoTargetDate }} 达成。
+              </template>
+              <template v-else>留空就会按每月存入和开始日期自动推算。</template>
+            </p>
           </div>
         </div>
 
@@ -370,15 +573,21 @@ async function submit() {
           <div v-else class="rounded-xl border border-border bg-muted/20 p-3">
             <p v-if="candidatesLoading" class="px-1 py-2 text-sm text-muted-foreground">加载中…</p>
             <p v-else-if="!candidates?.length" class="px-1 py-2 text-sm text-muted-foreground">
-              名下还没有资产，先到「录入数据」记一笔。
+              名下还没有资产，先到投资看板点「添加资产」记一笔。
             </p>
             <ul v-else class="max-h-[260px] space-y-1 overflow-y-auto">
               <li v-for="c in candidates" :key="c.id">
                 <button
                   type="button"
-                  :disabled="saving || c.archived"
+                  :disabled="saving || c.archived || !!c.linkedPlanName"
                   class="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                  :title="c.archived ? '已归档的资产不计入计划，先取消归档再关联' : undefined"
+                  :title="
+                    c.archived
+                      ? '已归档的资产不计入计划，先取消归档再关联'
+                      : c.linkedPlanName
+                        ? `已在「${c.linkedPlanName}」里，一个资产只能属于一个分类`
+                        : undefined
+                  "
                   @click="toggleAsset(c.id)"
                 >
                   <span
@@ -394,6 +603,9 @@ async function submit() {
                     <span class="ml-1 font-mono text-xs text-muted-foreground">{{ c.code }}</span>
                   </span>
                   <span v-if="c.archived" class="shrink-0 text-xs text-muted-foreground">已归档</span>
+                  <span v-else-if="c.linkedPlanName" class="shrink-0 text-xs text-muted-foreground">
+                    已在「{{ c.linkedPlanName }}」
+                  </span>
                   <span class="shrink-0 font-mono text-sm tabular-nums text-muted-foreground">
                     {{ formatCNY(c.amount) }}
                   </span>

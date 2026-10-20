@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS `user` (
                         `role` VARCHAR(20) NOT NULL DEFAULT 'user' COMMENT '角色：user或admin',
                         `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
                         `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                        `update_series_time` DATETIME DEFAULT NULL COMMENT 'asset_series 上次推进到的日期，见 SeriesService.advance'
+                        `update_series_time` DATETIME DEFAULT NULL COMMENT 'asset_series 上次推进到的日期，见 SeriesService.advance',
+                        `monthly_inflow` DECIMAL(18,4) DEFAULT NULL COMMENT '每月固定新增（定投分析页的现金流假设），NULL = 用户未设置'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户表';
 
 -- 兼容历史库：老版本 user 表没有 nickname 列，且 email 是 NOT NULL。
@@ -72,6 +73,19 @@ PREPARE migrate_user FROM @ddl;
 EXECUTE migrate_user;
 DEALLOCATE PREPARE migrate_user;
 
+-- monthly_inflow：「定投分析」页手工维护的现金流假设（每月固定新增），只由 CashFlowService 读写。
+-- NULL = 用户还没设置（页面显示「未设置」，预测按 0 计）。口径：
+--   12 个月后预计现金 = 当前可用现金 + 12 × 每月固定新增 − 12 × 每月定投总额。
+SET @has_monthly_inflow = (SELECT COUNT(*) FROM information_schema.COLUMNS
+                           WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'user'
+                             AND COLUMN_NAME = 'monthly_inflow');
+SET @ddl = IF(@has_monthly_inflow = 0,
+              'ALTER TABLE `user` ADD COLUMN `monthly_inflow` DECIMAL(18,4) DEFAULT NULL COMMENT ''每月固定新增（定投分析页的现金流假设），NULL = 用户未设置'' AFTER `update_series_time`',
+              'DO 0');
+PREPARE migrate_user FROM @ddl;
+EXECUTE migrate_user;
+DEALLOCATE PREPARE migrate_user;
+
 -- ============================== 2. adjustments 资产调整记录表 ==============================
 CREATE TABLE IF NOT EXISTS `adjustments` (
                                `adjustment_id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '调整记录ID',
@@ -79,7 +93,8 @@ CREATE TABLE IF NOT EXISTS `adjustments` (
                                `code` VARCHAR(64) NOT NULL COMMENT '资产编码',
                                `date` DATE NOT NULL COMMENT '记录日期',
                                `reason` VARCHAR(255) COMMENT '变动原因',
-                               `action` TINYINT NOT NULL COMMENT '动作：1定投开始，2结束定投，3一笔收入，4一笔支出',
+                               `action` TINYINT NOT NULL COMMENT '动作：1定投开始，2结束定投，3买入，4卖出（现金的进账/出账走3/4）',
+                               `deferred` TINYINT NOT NULL DEFAULT 0 COMMENT '是否从下一交易日起生效：1是0否（仅 action=1；0 = 按原规则当日生效）',
                                `frequency` VARCHAR(64) COMMENT '频率',
                                `amount` DECIMAL(18,4) NOT NULL COMMENT '金额',
                                `note` VARCHAR(512) COMMENT '备注',
@@ -87,11 +102,21 @@ CREATE TABLE IF NOT EXISTS `adjustments` (
                                INDEX idx_user_code (`user_id`, `code`, `date`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='资产调整记录表';
 
+-- 兼容历史库：deferred 是后加的列（定投详情「调整定投」用，从下一交易日起生效）。
+SET @has_adjustment_deferred = (SELECT COUNT(*) FROM information_schema.COLUMNS
+                                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'adjustments' AND COLUMN_NAME = 'deferred');
+SET @ddl = IF(@has_adjustment_deferred = 0,
+              'ALTER TABLE `adjustments` ADD COLUMN `deferred` TINYINT NOT NULL DEFAULT 0 COMMENT ''是否从下一交易日起生效：1是0否（仅 action=1）'' AFTER `action`',
+              'DO 0');
+PREPARE migrate_adjustment_deferred FROM @ddl;
+EXECUTE migrate_adjustment_deferred;
+DEALLOCATE PREPARE migrate_adjustment_deferred;
+
 -- ============================== 3. nav_trend 外部获取净值表 ==============================
 CREATE TABLE IF NOT EXISTS `nav_trend` (
                              `id` BIGINT PRIMARY KEY AUTO_INCREMENT,
                              `day` DATE NOT NULL COMMENT '日期',
-                             `value` DECIMAL(18,4) NOT NULL COMMENT '单位净值',
+                             `value` DECIMAL(18,8) NOT NULL COMMENT '单位净值（货币基金为每万份收益合成的复权净值）',
                              `rate` DECIMAL(18,4) DEFAULT NULL COMMENT '日增长率(%)，与 py 返回的「日增长率」同义',
                              `code` VARCHAR(64) NOT NULL COMMENT '资产编码',
                              UNIQUE KEY idx_day_code (`day`, `code`)
@@ -105,6 +130,17 @@ SET @ddl = IF(@has_nav_rate = 0,
 PREPARE migrate_nav FROM @ddl;
 EXECUTE migrate_nav;
 DEALLOCATE PREPARE migrate_nav;
+
+-- value 4 位小数 → 8 位（2026-10-14）：货币基金的净值是「每万份收益」合成的复权净值，
+-- 每天只涨 ~0.00008，4 位小数会把收益抹平（市值恒等于本金）；普通基金的 4 位净值不受影响。
+SET @nav_value_scale = (SELECT NUMERIC_SCALE FROM information_schema.COLUMNS
+                        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'nav_trend' AND COLUMN_NAME = 'value');
+SET @ddl = IF(IFNULL(@nav_value_scale, 0) < 8,
+              'ALTER TABLE `nav_trend` MODIFY COLUMN `value` DECIMAL(18,8) NOT NULL COMMENT ''单位净值（货币基金为每万份收益合成的复权净值）''',
+              'DO 0');
+PREPARE migrate_nav_value FROM @ddl;
+EXECUTE migrate_nav_value;
+DEALLOCATE PREPARE migrate_nav_value;
 
 -- ============================== 4. saving_plans 储蓄计划表 ==============================
 -- 计划与资产的多对多关联见第 7 节的 plan_asset 表（2026-10-05 起不再用 asset.plan_id）。
@@ -136,7 +172,7 @@ CREATE TABLE IF NOT EXISTS `asset` (
                          `name` VARCHAR(100) NOT NULL COMMENT '资产名称',
                          `code` VARCHAR(64) NOT NULL COMMENT '资产编码',
                          `category` VARCHAR(64) DEFAULT NULL COMMENT '资产分类：fund/stock/bond/cash；fund 的股基/债基细分看 asset_type',
-                         `asset_type` VARCHAR(16) DEFAULT NULL COMMENT '资产类型：equity 股基 / bond 债基 / cash 现金（仅 CASH 行，系统维护）；基金行只写 equity/bond，NULL 按 equity 算（安全资金统计按 bond+cash 计）',
+                         `asset_type` VARCHAR(16) DEFAULT NULL COMMENT '资产类型：equity 股基 / bond 债基 / money 货币基金 / cash 现金（仅 CASH 行，系统维护）；基金行只写 equity/bond/money，NULL 按 equity 算（安全资金统计按 bond+money+cash 计）',
                          `active` TINYINT DEFAULT 1 COMMENT '定投是否进行中 1是0否',
                          `archived` TINYINT NOT NULL DEFAULT 0 COMMENT '是否归档 1是0否（用户维护的元数据，fold 不覆盖）',
                          `frequency` VARCHAR(64) DEFAULT NULL COMMENT '当前定投频率',
@@ -196,14 +232,28 @@ EXECUTE migrate_asset;
 DEALLOCATE PREPARE migrate_asset;
 
 -- asset_type：资产类型（2026-10-02 加，用户维护的元数据、fold 不覆盖）。
--- 基金行：equity 股基 / bond 债基（录入界面可选，见 AdjustmentRequest.assetType）；CASH 行：cash（系统维护）。
--- NULL = 未标注，按股基算（下面回填成 equity）；「安全资金占比」（我的资产页）按 bond + cash 的市值 / 总资产算，
--- 见 AssetService.summary。
+-- 基金行：equity 股基 / bond 债基 / money 货币基金（2026-10-13 加，录入界面可选，见 AdjustmentRequest.assetType）；
+-- CASH 行：cash（系统维护）。
+-- NULL = 未标注，按股基算（下面回填成 equity）；「安全资金占比」（我的资产页）
+-- 按 bond + money + cash 的市值 / 总资产算，见 AssetService.summary。
 SET @has_asset_type = (SELECT COUNT(*) FROM information_schema.COLUMNS
                        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset'
                          AND COLUMN_NAME = 'asset_type');
 SET @ddl = IF(@has_asset_type = 0,
               'ALTER TABLE `asset` ADD COLUMN `asset_type` VARCHAR(16) DEFAULT NULL COMMENT ''资产类型：equity 股基 / bond 债基 / cash 现金（仅 CASH 行，系统维护）；基金行只写 equity/bond，NULL 按 equity 算（安全资金统计按 bond+cash 计）'' AFTER `category`',
+              'DO 0');
+PREPARE migrate_asset FROM @ddl;
+EXECUTE migrate_asset;
+DEALLOCATE PREPARE migrate_asset;
+
+-- 列注释跟着取值走（2026-10-13 加了 money 货币基金）：拿注释本身当迁移标记 —— 注释里有 money
+-- 就是改过了，之后每次启动都走 DO 0（与 saving_plans.type 的迁移同一套做法，不会反复 MODIFY）。
+SET @asset_type_comment_old = (SELECT COUNT(*) FROM information_schema.COLUMNS
+                               WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'asset'
+                                 AND COLUMN_NAME = 'asset_type'
+                                 AND COLUMN_COMMENT NOT LIKE '%money%');
+SET @ddl = IF(@asset_type_comment_old = 1,
+              'ALTER TABLE `asset` MODIFY COLUMN `asset_type` VARCHAR(16) DEFAULT NULL COMMENT ''资产类型：equity 股基 / bond 债基 / money 货币基金 / cash 现金（仅 CASH 行，系统维护）；基金行只写 equity/bond/money，NULL 按 equity 算（安全资金统计按 bond+money+cash 计）''',
               'DO 0');
 PREPARE migrate_asset FROM @ddl;
 EXECUTE migrate_asset;
@@ -265,7 +315,7 @@ DEALLOCATE PREPARE migrate_asset;
 
 -- ============================== 6. asset_series 资产每日序列表 ==============================
 -- 由 SeriesService 按《表设计.md》的核心更新流程逐日推进写入：
---   amount    当日净投入 = 当日周期扣款 + 一笔收入 − 一笔支出（可为负）
+--   amount    当日净投入 = 当日周期扣款 + 买入 − 卖出（可为负）
 --   fee       当日手续费 = 当日各笔买入的手续费之和（卖出为 0）；累计手续费 = Σfee
 --   principal 截至当日的累计投入本金
 --   total     截至当日的总市值 = 累计份额 × 当日净值
@@ -397,3 +447,36 @@ SET @ddl = IF(@type_unmigrated = 1,
 PREPARE migrate_plan_type FROM @ddl;
 EXECUTE migrate_plan_type;
 DEALLOCATE PREPARE migrate_plan_type;
+
+-- ============================== 8. monthly_inflow_override 每月新增的单月覆盖（定投分析） ==============================
+-- 「定投分析」页的每月固定新增有两层：user.monthly_inflow 是**默认值**（卡片 1 编辑），
+-- 本表是**单月覆盖**（点柱状图的柱子设置），按 (user_id, month) 唯一。
+-- 预测时：某月有覆盖行就用覆盖值，否则用默认值；删掉覆盖行 = 恢复默认。
+-- month 用 CHAR(7) 存 'YYYY-MM'（按自然月存档，窗口往后滚时已设过的月份自然跟着走）。
+CREATE TABLE IF NOT EXISTS `monthly_inflow_override` (
+    `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键',
+    `user_id` BIGINT NOT NULL COMMENT '用户主键',
+    `month` CHAR(7) NOT NULL COMMENT '目标月份，YYYY-MM',
+    `amount` DECIMAL(18,4) NOT NULL COMMENT '该月的每月固定新增（元）',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_user_month` (`user_id`, `month`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定投分析的每月固定新增-单月覆盖';
+
+-- ============================== 9. saving_plan_types 存钱计划的类型（内置 + 自定义） ==============================
+-- 类型拆成「code（稳定标识）+ name（显示名，可改）」两层：saving_plans.type 存的仍是 code，
+-- 所以改名只动这张表、不用碰任何计划。内置三种（asset 总资产 / life 生活保障 / wish 愿望）
+-- 由 SavingsService 在首次访问时按 (user_id, code) 幂等补种（INSERT IGNORE），
+-- 自定义类型 code = 'c' + 随机串，name 由用户填。
+-- 只有 asset 是系统类型：不能改名 / 删除（总资产计划的全账号唯一、必须带目标都绑在它身上）。
+CREATE TABLE IF NOT EXISTS `saving_plan_types` (
+    `id` BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键',
+    `user_id` BIGINT NOT NULL COMMENT '用户id',
+    `code` VARCHAR(32) NOT NULL COMMENT '类型标识（计划表存的就是它）：内置 asset/life/wish，自定义 c+随机串',
+    `name` VARCHAR(32) NOT NULL COMMENT '类型名称（显示用，可改）',
+    `sort_order` INT NOT NULL DEFAULT 100 COMMENT '排序：内置 0/1/2，自定义往后排',
+    `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_user_code` (`user_id`, `code`),
+    FOREIGN KEY (`user_id`) REFERENCES `user`(`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='存钱计划的类型（内置 + 用户自定义）';

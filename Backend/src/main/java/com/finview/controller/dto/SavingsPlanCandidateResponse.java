@@ -10,9 +10,11 @@ import java.math.BigDecimal;
  * 「添加资产」面板里的一条候选资产，对应前端 types.ts 的 SavingsPlanCandidate。
  *
  * 一个计划的候选 = 该用户的**全部资产**（含现金、含已归档），
- * linked / archived 两个布尔给前端决定这一行怎么渲染：
- * - linked：已关联（总资产计划下恒 true，它默认全含）；
- * - archived：已归档，不允许新关联（服务端也会拒），但已关联的仍要显示出来以便解除。
+ * linked / archived / linkedPlanName 三个字段给前端决定这一行怎么渲染：
+ * - linked：已关联到**本计划**（总资产计划下恒 true，它默认全含）；
+ * - archived：已归档，不允许新关联（服务端也会拒），但已关联的仍要显示出来以便解除；
+ * - linkedPlanName：**已在另一个计划里**（一一对应规则，2026-10-13 起）时给那个计划的名字，
+ *   前端据此把这一行禁用并提示「已在『养老金』里」；没有归属、或就是本计划时是 null。
  */
 @Data
 @NoArgsConstructor
@@ -36,4 +38,7 @@ public class SavingsPlanCandidateResponse {
 
     /** 是否已归档 */
     private boolean archived;
+
+    /** 已在另一个计划里时是那个计划的名字（本计划 / 无归属时为 null） */
+    private String linkedPlanName;
 }

@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * AssetService 展示桶划分的测试。
  *
  * 只测包级可见的 static {@code bucketOf}（不启 Spring）：这次新增的风险全在
- * 「基金按 asset_type 细分成股票基金 / 债券基金、NULL 按股基算」这一个点上，
+ * 「基金按 asset_type 细分成股票基金 / 债券基金 / 货币基金、NULL 按股基算」这一个点上，
  * mapper 那几行组装与 FundService 一样不覆盖（与 PortfolioServiceTest 同一套路）。
  */
 class AssetServiceTest {
@@ -23,14 +23,16 @@ class AssetServiceTest {
     }
 
     @Test
-    @DisplayName("基金按 asset_type 细分：bond 进债券基金，equity / NULL 进股票基金")
+    @DisplayName("基金按 asset_type 细分：bond 债券基金 / money 货币基金 / equity 与 NULL 股票基金")
     void splitsFundsByAssetType() {
         assertEquals("bondFund", AssetService.bucketOf(asset("fund", "bond")));
+        assertEquals("moneyFund", AssetService.bucketOf(asset("fund", "money")));
         assertEquals("equityFund", AssetService.bucketOf(asset("fund", "equity")));
         // 存量没标过的（NULL）按股基算，与 schema.sql 的回填、AssetService 的展示口径一致
         assertEquals("equityFund", AssetService.bucketOf(asset("fund", null)));
         // category 缺行时的兜底也是基金，同样按类型细分（与 summary 里的老行为一致）
         assertEquals("bondFund", AssetService.bucketOf(asset(null, "bond")));
+        assertEquals("moneyFund", AssetService.bucketOf(asset(null, "money")));
         assertEquals("equityFund", AssetService.bucketOf(asset(null, null)));
     }
 

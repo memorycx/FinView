@@ -4,7 +4,7 @@ import Card from '@/components/ui/card/Card.vue'
 import CardHeader from '@/components/ui/card/CardHeader.vue'
 import CardContent from '@/components/ui/card/CardContent.vue'
 import Badge from '@/components/ui/Badge.vue'
-import { formatCNY, frequencyLabel } from '@/lib/finance'
+import { adjustmentActionLabel, formatCNY, frequencyLabel } from '@/lib/finance'
 import type { Fund, PlanAdjustment } from '@/api/types'
 
 const props = defineProps<{
@@ -57,7 +57,7 @@ const entries = computed<TimelineEntry[]>(() => {
           />
           <p class="font-mono text-sm text-muted-foreground">{{ adj.date }}</p>
           <p class="mt-1 flex flex-wrap items-center gap-2 text-base font-semibold">
-            {{ adj.action }}
+            {{ adjustmentActionLabel(adj.action) }}
             <Badge
               v-if="!fund"
               variant="secondary"

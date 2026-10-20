@@ -36,7 +36,7 @@ public class FundResponse {
     private String category;
 
     /**
-     * 基金细分类型：asset.asset_type（equity 股基 / bond 债基）。
+     * 基金细分类型：asset.asset_type（equity 股基 / bond 债基 / money 货币基金）。
      * null = 未标注（asset 行缺失或存量没标过），前端按股票基金显示；
      * 现金不进 /funds（foldForUser 已滤掉），所以这里不会出现 cash。
      */
@@ -53,6 +53,15 @@ public class FundResponse {
 
     /** 当前每期定投金额；已结束或从未定投时为 null */
     private BigDecimal amount;
+
+    /**
+     * 申购费率（**百分数**，0.12 = 0.12%），来自 asset.rate；null 或 0 = 不收申购费。
+     * 定投详情页的「编辑」按钮用它回填，改完由后端整段重算序列。
+     */
+    private BigDecimal rate;
+
+    /** 标的市场：us / hk；null = A 股（只按 A 股日历过滤扣款日）。定投详情页的编辑表单用它回填 */
+    private String market;
 
     /** 计划开始时间，形如 2026-06（前端 PerformanceChart 按长度 7 识别为月份） */
     private String startDate;

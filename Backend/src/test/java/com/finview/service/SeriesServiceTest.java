@@ -66,7 +66,7 @@ class SeriesServiceTest {
     /* ==================== 场景 3：只有离散收支 ==================== */
 
     @Test
-    @DisplayName("只有一笔收入：本金就是买入金额，序列逐日连续，从未定投")
+    @DisplayName("只有一笔买入：本金就是买入金额，序列逐日连续，从未定投")
     void buyOnly() {
         Map<String, PlanState> states = foldRealData();
 
@@ -99,6 +99,74 @@ class SeriesServiceTest {
         // 周末不扣款
         assertEquals(BigDecimal.ZERO, amountOn(state, "2026-05-02"));
         assertEquals(BigDecimal.ZERO, amountOn(state, "2026-05-04"));
+    }
+
+    /* ==================== 定向调整：从下一交易日起生效 ==================== */
+
+    @Test
+    @DisplayName("deferred 只改金额：当天仍按旧金额扣，下一交易日起按新金额")
+    void deferredAmountChangeStartsNextTradingDay() {
+        List<Adjustment> events = List.of(
+                event(1, "DF", "2026-09-01", 1, "daily", "10"),
+                deferred(2, "DF", "2026-09-03", 1, "daily", "20"));
+        PlanState state = SeriesService.fold(USER_ID, events, Map.of(), Map.of(),
+                EVERY_DAY, LocalDate.parse("2026-09-05")).get("DF");
+
+        // 9/3（调整当天）仍是旧金额，9/4 起才是 20
+        assertEquals(new BigDecimal("10"), amountOn(state, "2026-09-03"));
+        assertEquals(new BigDecimal("20"), amountOn(state, "2026-09-04"));
+        assertEquals("调整定投", state.getTimeline().get(1).getAction());
+        assertTrue(state.getTimeline().get(1).getDeferred());
+    }
+
+    @Test
+    @DisplayName("deferred 改频率+金额：当天旧计划，下一交易日起按新频率（周一时才扣）")
+    void deferredFrequencyChangeStartsNextTradingDay() {
+        List<Adjustment> events = List.of(
+                event(1, "DW", "2026-09-01", 1, "daily", "10"),
+                deferred(2, "DW", "2026-09-03", 1, "weekly", "100"));
+        PlanState state = SeriesService.fold(USER_ID, events, Map.of(), Map.of(),
+                EVERY_DAY, LocalDate.parse("2026-09-09")).get("DW");
+
+        // 9/3 周四仍扣每日 10；周五起新计划是周投，不扣；9/7 周一扣 100
+        assertEquals(new BigDecimal("10"), amountOn(state, "2026-09-03"));
+        assertEquals(BigDecimal.ZERO, amountOn(state, "2026-09-04"));
+        assertEquals(new BigDecimal("100"), amountOn(state, "2026-09-07"));
+    }
+
+    @Test
+    @DisplayName("deferred 跨非交易日：生效日之前仍按旧计划，节假日顺延的旧扣款照常补扣")
+    void deferredPlanKeepsOldPlanUntilNextTradingDay() {
+        // 9/5 是周六、9/7（周一）是节假日 → 下一个交易日是 9/8；旧计划是每周一 100
+        Predicate<LocalDate> calendar = day ->
+                isWeekday(day) && !day.equals(LocalDate.parse("2026-09-07"));
+        List<Adjustment> events = List.of(
+                event(1, "DH", "2026-08-31", 1, "weekly", "100"),
+                deferred(2, "DH", "2026-09-05", 1, "daily", "10"));
+        PlanState state = SeriesService.fold(USER_ID, events, Map.of(), Map.of(),
+                calendar, LocalDate.parse("2026-09-09")).get("DH");
+
+        // 9/7 旧计划（周投）的周期点落在节假日 → 顺延 100；9/8 新计划生效，当天 daily 10 + 补扣 100
+        assertEquals(BigDecimal.ZERO, amountOn(state, "2026-09-07"));
+        assertEquals(new BigDecimal("110"), amountOn(state, "2026-09-08"));
+        assertEquals(new BigDecimal("10"), amountOn(state, "2026-09-09"));
+    }
+
+    @Test
+    @DisplayName("deferred 调整在生效前被结束定投：调整作废，不会把计划重新拉起来")
+    void deferredAdjustmentCancelledByStopBeforeEffectiveDate() {
+        List<Adjustment> events = List.of(
+                event(1, "DS", "2026-08-31", 1, "weekly", "100"),
+                deferred(2, "DS", "2026-09-04", 1, "daily", "10"),
+                event(3, "DS", "2026-09-05", 2, null, "0"));
+        PlanState state = SeriesService.fold(USER_ID, events, Map.of(), Map.of(),
+                A_SHARE_CALENDAR, LocalDate.parse("2026-09-09")).get("DS");
+
+        // 9/5 结束定投；9/7（下一个交易日）不应按 deferred 的新计划重新开始
+        assertEquals(new BigDecimal("100"), amountOn(state, "2026-08-31"));
+        assertEquals(BigDecimal.ZERO, amountOn(state, "2026-09-07"));
+        assertEquals(BigDecimal.ZERO, amountOn(state, "2026-09-08"));
+        assertFalse(state.isActive());
     }
 
     /* ==================== 场景 2：weekly，含「停止当天是周期点」 ==================== */
@@ -160,7 +228,7 @@ class SeriesServiceTest {
         assertEquals(new BigDecimal("203.73"), amountOn(state, "2026-06-15"));
         // 时间线按 adjustment_id 升序：两条「开始定投」在前，买入在后
         assertEquals("开始定投", state.getTimeline().get(2).getAction());
-        assertEquals("一笔收入", state.getTimeline().get(4).getAction());
+        assertEquals("买入", state.getTimeline().get(4).getAction());
     }
 
     @Test
@@ -397,9 +465,9 @@ class SeriesServiceTest {
     /* ==================== 申购手续费 ==================== */
 
     @Test
-    @DisplayName("买入扣手续费：一笔收入按 金额×费率/100 扣，净额进本金")
+    @DisplayName("买入扣手续费：买入按 金额×费率/100 扣，净额进本金")
     void buyFeeReducesPrincipal() {
-        // 一笔收入 100，费率 0.12% → 手续费 0.12，净额 99.88
+        // 买入 100，费率 0.12% → 手续费 0.12，净额 99.88
         List<Adjustment> events = List.of(event(1, "B", "2026-09-01", 3, null, "100"));
 
         PlanState state = SeriesService.fold(USER_ID, events, Map.of(), Map.of("B", new BigDecimal("0.12")),
@@ -425,7 +493,7 @@ class SeriesServiceTest {
     @Test
     @DisplayName("手续费同时压缩份额与市值：净额才是真正买进去的钱")
     void feeReducesSharesAndMarketValue() {
-        // 一笔收入 100，费率 1%（好算），当日净值 1.0 → 只买到 99 份
+        // 买入 100，费率 1%（好算），当日净值 1.0 → 只买到 99 份
         List<Adjustment> events = List.of(event(1, "F", "2026-09-01", 3, null, "100"));
 
         NavigableMap<LocalDate, BigDecimal> navs = new TreeMap<>();
@@ -439,7 +507,7 @@ class SeriesServiceTest {
     }
 
     @Test
-    @DisplayName("卖出不扣费率：一笔支出全额冲减本金")
+    @DisplayName("卖出不扣费率：卖出全额冲减本金")
     void sellIsNotChargedFee() {
         List<Adjustment> events = List.of(
                 event(1, "S", "2026-09-01", 3, null, "100"),
@@ -661,8 +729,17 @@ class SeriesServiceTest {
         event.setCode(code);
         event.setDate(LocalDate.parse(date));
         event.setAction(action);
+        event.setDeferred(false);
         event.setFrequency(frequency);
         event.setAmount(new BigDecimal(amount));
+        return event;
+    }
+
+    /** 标了「从下一交易日起生效」的 action=1 调整 */
+    private static Adjustment deferred(long id, String code, String date, int action,
+                                       String frequency, String amount) {
+        Adjustment event = event(id, code, date, action, frequency, amount);
+        event.setDeferred(true);
         return event;
     }
 

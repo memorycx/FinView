@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { Loader2 } from '@lucide/vue'
 import Button from '@/components/ui/Button.vue'
 import { createAdjustment, updateAdjustment } from '@/api'
@@ -7,32 +7,25 @@ import type {
   Adjustment,
   AdjustmentAction,
   AdjustmentPayload,
-  FundType,
   InvestFrequency,
 } from '@/api/types'
 
 /**
- * 调整记录的内嵌编辑 / 新增表单（定投详情页、计划列表的空态都用它）：
- * 字段与录入页一致，只是收成卡片里的纵向布局，塞进右侧窄列（最窄约 244px）。
+ * 调整记录的内嵌编辑 / 新增表单（定投详情页用）：
+ * 字段与录入弹窗（EntryDialog）一致，只是收成卡片里的纵向布局，塞进右侧窄列（最窄约 244px）。
  *
- * 两种模式由 code 区分：
- * - 传了 code（详情页）：编码固定为当前计划、不提供修改入口——在「某只基金」的详情里改记录，
- *   本来就不该把它挪到别的资产上；
- * - code 为 null（列表底部的「添加资产」）：显示编码输入框（必填）、名称输入框（选填）
- *   与股基/债基二选一，用于给新用户 / 新资产录入第一条记录。
+ * 只服务已有资产：编码固定为当前计划、不提供修改入口——在「某只基金」的详情里改记录，
+ * 本来就不该把它挪到别的资产上；给新资产录第一条走投资看板的「添加资产」弹窗。
  */
 const props = defineProps<{
-  /** 当前计划的资产编码，提交时原样带上；null = 添加新资产（表单里手动填编码） */
-  code?: string | null
+  /** 当前计划的资产编码，提交时原样带上 */
+  code: string
   /**
    * 编辑时传库里的原始记录（由父级 GET /adjustments/{id} 拉好），新增传 null。
    * 列表里的时间线项不能直接回填：action 是文案、结束定投的金额被置空了。
    */
   record: Adjustment | null
 }>()
-
-/** 没带 code = 添加新资产：编码与名称要在表单里自己填 */
-const isNewAsset = computed(() => !props.code)
 
 const emit = defineEmits<{
   /** 保存成功：父级关表单并重拉计划列表与组合走势 */
@@ -43,8 +36,8 @@ const emit = defineEmits<{
 const actionOptions: { value: AdjustmentAction; label: string }[] = [
   { value: 1, label: '定投开始' },
   { value: 2, label: '结束定投' },
-  { value: 3, label: '一笔收入' },
-  { value: 4, label: '一笔支出' },
+  { value: 3, label: '买入' },
+  { value: 4, label: '卖出' },
 ]
 
 const frequencyOptions: { value: InvestFrequency; label: string }[] = [
@@ -53,27 +46,19 @@ const frequencyOptions: { value: InvestFrequency; label: string }[] = [
   { value: 'monthly', label: '每月' },
 ]
 
-/** 基金细分类型（只在「添加资产」模式显示）：股基 / 债基，就是 asset.asset_type 的两个取值 */
-const fundTypeOptions: { value: FundType; label: string }[] = [
-  { value: 'equity', label: '股票基金' },
-  { value: 'bond', label: '债券基金' },
-]
-
 /** 今天 YYYY-MM-DD */
 function today(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
 const form = reactive({
-  // 添加新资产时才有值；详情页里编码来自 props.code，这两个字段不展示
-  code: '',
-  name: '',
-  // 基金细分类型：同样只在「添加资产」模式显示（股基 = asset.asset_type 的 equity）
-  assetType: 'equity' as FundType,
   date: props.record?.date ?? today(),
   action: (props.record?.action ?? 1) as AdjustmentAction,
   // 结束定投等记录的 frequency 是 null，兜底成 monthly（只有 action=1 会展示并提交它）
   frequency: ((props.record?.frequency as InvestFrequency | null) ?? 'monthly') as InvestFrequency,
+  // 只有 action=1 有意义：勾上 = 当天仍按原计划扣，频率与金额从下一交易日起生效。
+  // 编辑已有记录时保留库里的值，避免把「调整定投」改回当日生效。
+  deferred: props.record?.deferred ?? false,
   amount: props.record ? String(props.record.amount) : '',
   reason: props.record?.reason ?? '',
   note: props.record?.note ?? '',
@@ -82,26 +67,12 @@ const form = reactive({
 const saving = ref(false)
 const error = ref('')
 
-/**
- * 用户动过股基/债基控件的标记：动过才把 assetType 提交上去。
- * 不动 = 不改已有分类——表单默认高亮股基，但给一只已有的债基录常规记录时不该把它翻回去；
- * 新建的资产行由后端落默认 equity，不传与传 equity 结果一样。
- */
-const assetTypeTouched = ref(false)
-
-/** 选类型：点过就记 touched（提交时才带 assetType，见 payload） */
-function pickAssetType(value: FundType) {
-  form.assetType = value
-  assetTypeTouched.value = true
-}
-
 const inputClass =
   'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand disabled:opacity-50 disabled:cursor-not-allowed'
 
 async function submit() {
   if (saving.value) return
   error.value = ''
-  if (isNewAsset.value && !form.code.trim()) return (error.value = '请填写资产编码')
   if (!form.date) return (error.value = '请选择记录日期')
   if (form.action === 1 && !form.frequency) {
     return (error.value = '定投开始需选择定投频率')
@@ -112,17 +83,15 @@ async function submit() {
   }
 
   const payload: AdjustmentPayload = {
-    code: props.code ?? form.code.trim(),
-    // 名称只在添加新资产时填：详情页里改记录不该顺手把资产名也改掉
-    name: isNewAsset.value ? form.name.trim() || undefined : undefined,
-    // 同理，类型也只在「添加资产」且用户动过控件时才提交（见 assetTypeTouched）
-    assetType: isNewAsset.value && assetTypeTouched.value ? form.assetType : undefined,
+    code: props.code,
     date: form.date,
     action: form.action,
-    // 只有定投开始带频率，其余传 null 让后端归一（与录入页同一套约定）
+    // 只有定投开始带频率，其余传 null 让后端归一（与录入弹窗同一套约定）
     frequency: form.action === 1 ? form.frequency : null,
+    // 只有定投开始/调整才有「下一交易日起生效」的选项
+    deferred: form.action === 1 ? form.deferred : false,
     amount,
-    // 留空 = 不动：后端对空原因/备注会把它置空，这里与录入页一致用 undefined 表达「没填」
+    // 留空 = 不动：后端对空原因/备注会把它置空，这里与录入弹窗一致用 undefined 表达「没填」
     reason: form.reason.trim() || undefined,
     note: form.note.trim() || undefined,
   }
@@ -150,56 +119,8 @@ async function submit() {
     @submit.prevent="submit"
   >
     <p class="text-sm font-medium">
-      {{ record ? '编辑记录' : isNewAsset ? '添加资产' : '新增记录' }}
+      {{ record ? '编辑记录' : '新增记录' }}
     </p>
-
-    <div v-if="isNewAsset" class="space-y-1.5">
-      <label class="text-xs text-muted-foreground" for="adj-code">资产编码</label>
-      <input
-        id="adj-code"
-        v-model="form.code"
-        type="text"
-        placeholder="基金代码，如 005827"
-        maxlength="64"
-        :class="inputClass"
-        :disabled="saving"
-      />
-    </div>
-
-    <div v-if="isNewAsset" class="space-y-1.5">
-      <label class="text-xs text-muted-foreground" for="adj-name">资产名称</label>
-      <input
-        id="adj-name"
-        v-model="form.name"
-        type="text"
-        placeholder="选填，留空就用编码显示"
-        maxlength="100"
-        :class="inputClass"
-        :disabled="saving"
-      />
-    </div>
-
-    <!-- 股基 / 债基：进「资产配置结构」的两个桶，债基还计入安全资金 -->
-    <div v-if="isNewAsset" class="space-y-1.5">
-      <span class="text-xs text-muted-foreground">资产类型</span>
-      <div class="grid grid-cols-2 gap-1.5">
-        <button
-          v-for="opt in fundTypeOptions"
-          :key="opt.value"
-          type="button"
-          :disabled="saving"
-          class="rounded-lg border px-2 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          :class="
-            form.assetType === opt.value
-              ? 'border-brand bg-brand/15 text-brand'
-              : 'border-border hover:bg-muted'
-          "
-          @click="pickAssetType(opt.value)"
-        >
-          {{ opt.label }}
-        </button>
-      </div>
-    </div>
 
     <div class="space-y-1.5">
       <label class="text-xs text-muted-foreground" for="adj-date">记录日期</label>
@@ -268,6 +189,25 @@ async function submit() {
         </option>
       </select>
     </div>
+
+    <!-- 调整的生效时机：只在 action=1 时出现；默认不勾 = 保持原有口径 -->
+    <label
+      v-if="form.action === 1"
+      class="flex cursor-pointer items-start gap-2.5 rounded-lg border border-border/70 px-2.5 py-2.5 transition-colors hover:bg-muted/50"
+    >
+      <input
+        v-model="form.deferred"
+        type="checkbox"
+        class="mt-0.5 size-4 shrink-0 accent-[var(--brand)]"
+        :disabled="saving"
+      />
+      <span class="min-w-0">
+        <span class="block text-xs font-medium text-foreground">从下一交易日起生效</span>
+        <span class="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+          当天仍按原计划扣款；频率与金额从下一个交易日起生效
+        </span>
+      </span>
+    </label>
 
     <div class="space-y-1.5">
       <label class="text-xs text-muted-foreground" for="adj-reason">变动原因</label>

@@ -68,9 +68,13 @@ import java.util.stream.Collectors;
  * 几条不写在表结构里、但会直接影响数字的规则：
  * - **扣款日**：daily 每个交易日；weekly **每周一**；monthly **每月 1 日**（固定的自然周期，
  *   不是「起点 + N 天」）。所以周一/1 号当天新开的定投当天就扣，其它日子开的要等到下一个周一/1 号。
- * - **调整什么时候生效**：只改金额（定投下调/上调）**当天就按新金额扣**；
+ * - **调整什么时候生效**：普通 action=1 只改金额（定投下调/上调）**当天就按新金额扣**；
  *   改频率（每日 → 每周）**当天仍按原计划扣**，新频率次日生效
  *   —— 008887 在 2026-09-02 由每日改每周，那天扣的仍是每日那一笔，之后从 9/7（周一）开始走周投。
+ *   **标了 `adjustments.deferred` 的 action=1**（定投详情「调整定投」按钮创建）例外：
+ *   记录日只写时间线，频率与金额从**严格晚于记录日的下一个交易日**起才生效
+ *   （生效日前一直按旧计划扣，包括中间的非交易日；记录日当天也不变）。
+ *   历史记录 `deferred=0`，口径保持不变。
  * - **非交易日不扣款**（周末、节假日），判定见 {@link TradingCalendarService}：
  *   每日定投直接跳过那一天（否则下一个交易日会连扣两笔）；
  *   每周 / 每月定投顺延到下一个交易日补扣（券商通行规则）。顺延期间若定投被结束，那笔补扣作废。
@@ -79,15 +83,15 @@ import java.util.stream.Collectors;
  * - **停止定投当天仍算一个周期点**（表设计.md 场景 2 的 [起点, 终点]，用户确认过）。
  * - **一天只扣一次款**：同一天出现多条 action=1（重复录入）不会重复扣款，
  *   因为扣款由「当天是不是周期点」决定，与事件条数无关。
- * - **买入要扣申购手续费**：周期扣款和「一笔收入」都按 asset.rate（百分数）扣
+ * - **买入要扣申购手续费**：周期扣款和「买入」（action=3）都按 asset.rate（百分数）扣
  *   手续费 = 金额 × rate / 100（**四舍五入到分，不足 1 分按 1 分**），**扣完的净额才计入本金与份额**；
- *   「一笔支出」（卖出）不是买入，不扣费率，全额冲减本金；没配费率（null/0）就不收。
+ *   「卖出」（action=4）不是买入，不扣费率，全额冲减本金；没配费率（null/0）就不收。
  *   每笔收的手续费逐日记进 asset_series.fee（累计手续费 = Σfee）；前端收益折线图
  *   按「市值 − 本金 − 累计手续费」算收益，把申购费当成本。
  * - **市值 = 累计份额 × 当日净值**，份额 = Σ(当日净投入 / 当日净值)。当天没有净值时沿用最近一次
  *   （QDII 净值晚几天，估值自然滞后，不影响扣款），整段没有净值时按净值 1 处理
  *   （此时 total 恰好等于 principal，收益率 0）。
- * - **清仓**：一笔支出的金额 ≥ 当天持仓市值时视为**清仓**（2026-10-01 按 000051 的真实成交确认的口径）：
+ * - **清仓**：卖出（action=4）的金额 ≥ 当天持仓市值时视为**清仓**（2026-10-01 按 000051 的真实成交确认的口径）：
  *   份额归零、市值跟着变 0（不会留下负份额的空头），但**本金与手续费照常按净额累计** ——
  *   累计收益 = 市值 − 本金 − 手续费 要跨轮连续，不能因为清仓就把已实现收益抹掉
  *   （平台到账金额含已实现盈亏，卖出价高于投入时本金会变成负数，这是「净投入」的正常结果）。
@@ -123,8 +127,11 @@ public class SeriesService {
     private static final String LABEL_DOWN = "下调金额";
     private static final String LABEL_FREQUENCY = "调整频率";
     private static final String LABEL_STOP = "结束定投";
-    private static final String LABEL_INCOME = "一笔收入";
-    private static final String LABEL_EXPENSE = "一笔支出";
+    /** 标了 deferred 的 action=1：记录日仍按原计划扣，新频率 / 金额从下一个交易日起生效 */
+    private static final String LABEL_ADJUST = "调整定投";
+    /** action=3 / 4 的时间线文案。与录入表单、编辑表单里的「买入 / 卖出」保持一致 */
+    private static final String LABEL_INCOME = "买入";
+    private static final String LABEL_EXPENSE = "卖出";
 
     /** 频率取值，与前端 InvestFrequency 一致 */
     private static final String FREQ_DAILY = "daily";
@@ -324,7 +331,7 @@ public class SeriesService {
         asset.setCode(CashAsset.CODE);
         asset.setName(CashAsset.NAME);
         asset.setCategory(CashAsset.CATEGORY);
-        // 类型同样是系统语义（安全资金统计按 bond + cash 计），每次刷新都照写
+        // 类型同样是系统语义（安全资金统计按 bond + money + cash 计），每次刷新都照写
         asset.setAssetType(CashAsset.ASSET_TYPE);
         asset.setActive(false);
         asset.setStartDate(CashLedger.startDate(cashEvents));
@@ -440,11 +447,22 @@ public class SeriesService {
         Map<LocalDate, List<Adjustment>> byDay = ordered.stream()
                 .collect(Collectors.groupingBy(Adjustment::getDate, TreeMap::new, Collectors.toList()));
 
+        // deferred 的 action=1（定投详情的「调整定投」）：记录日只写时间线，
+        // 真正切换扣款计划要等到「严格晚于记录日的下一个交易日」。
+        // 先按生效日分组，到那天在扣款前应用（同日多条按 adjustment_id 顺序，最后一条为准）。
+        Map<LocalDate, List<Adjustment>> deferredStarts = new TreeMap<>();
+        for (Adjustment event : ordered) {
+            if (event.getAction() == ACTION_START && Boolean.TRUE.equals(event.getDeferred())) {
+                LocalDate effective = nextTradingDay(event.getDate(), isTradingDay);
+                deferredStarts.computeIfAbsent(effective, key -> new ArrayList<>()).add(event);
+            }
+        }
+
         // 窗口 = [首条记录, today]，首条记录在未来（录错日期）时至少也写一行，避免序列为空
         LocalDate end = first.isAfter(today) ? first : today;
         for (LocalDate day = first; !day.isAfter(end); day = day.plusDays(1)) {
             List<Adjustment> dayEvents = byDay.getOrDefault(day, List.of());
-            // 当天的净投入：周期扣款 + 一笔收入 − 一笔支出，最后原样落进 amount 列
+            // 当天的净投入：周期扣款 + 买入 − 卖出，最后原样落进 amount 列
             BigDecimal dayAmount = BigDecimal.ZERO;
             // 当天被收走的手续费（各笔买入之和），落进 fee 列；卖出不收费
             BigDecimal dayFee = BigDecimal.ZERO;
@@ -494,16 +512,31 @@ public class SeriesService {
             boolean frequencyChanged = false;
             for (Adjustment event : dayEvents) {
                 if (event.getAction() == ACTION_START) {
-                    if (activeBefore && !Objects.equals(frequencyBefore, event.getFrequency())) {
+                    if (!Boolean.TRUE.equals(event.getDeferred())
+                            && activeBefore && !Objects.equals(frequencyBefore, event.getFrequency())) {
                         frequencyChanged = true;
                     }
                     timelineItems.add(new TimelineItem(event, startLabel(state, event)));
-                    applyStart(state, event);
+                    // deferred 调整在记录日不改变扣款计划，到生效日（下面）才应用
+                    if (!Boolean.TRUE.equals(event.getDeferred())) {
+                        applyStart(state, event);
+                    }
                 }
+            }
+            // 生效日 = 严格晚于记录日的下一个交易日：从这天起（含当天）按新计划扣款。
+            // 但记录之后、生效之前已经「结束定投」的，这次调整作废 —— 否则会把停掉的计划重新拉起来。
+            for (Adjustment event : deferredStarts.getOrDefault(day, List.of())) {
+                if (state.lastStopDate != null
+                        && !state.lastStopDate.isBefore(event.getDate())
+                        && state.lastStopDate.isBefore(day)) {
+                    continue;
+                }
+                applyStart(state, event);
             }
 
             // 3. 周期扣款：交易日才扣，非交易日按频率跳过或顺延（结束当天仍算周期点，见类注释）。
-            //    改频率当天用调整前的计划；只改金额（定投下调）当天就用新金额；
+            //    普通调整：改频率当天用调整前的计划、只改金额当天就用新金额；
+            //    deferred 调整在生效日当天才应用到 state，所以生效日前自然还是旧计划；
             //    新开/重启的定投（调整前没在投）当天就按新计划判断。
             DeductionPlan plan = frequencyChanged
                     ? new DeductionPlan(activeBefore, frequencyBefore, amountBefore)
@@ -519,6 +552,7 @@ public class SeriesService {
             for (Adjustment event : dayEvents) {
                 if (event.getAction() == ACTION_STOP) {
                     state.active = false;
+                    state.lastStopDate = day;
                     timelineItems.add(new TimelineItem(event, LABEL_STOP));
                 }
             }
@@ -627,6 +661,10 @@ public class SeriesService {
         if (!state.everInvested || state.amount == null || event.getAmount() == null) {
             return LABEL_START;
         }
+        // 定向调整：文案固定为「调整定投」，具体频率 / 金额在行内展示，并带「次一交易日起生效」徽标
+        if (Boolean.TRUE.equals(event.getDeferred())) {
+            return LABEL_ADJUST;
+        }
         int diff = event.getAmount().compareTo(state.amount);
         if (diff > 0) {
             return LABEL_UP;
@@ -656,6 +694,21 @@ public class SeriesService {
             case FREQ_MONTHLY -> day.getDayOfMonth() == 1;
             default -> false;
         };
+    }
+
+    /**
+     * 严格晚于 day 的下一个交易日（与扣款口径一致：QDII 已由调用方的 predicate 叠加标的市场休市）。
+     * 一年内找不到交易日时退化成次日，避免死循环（正常日历不会发生）。
+     */
+    static LocalDate nextTradingDay(LocalDate day, Predicate<LocalDate> isTradingDay) {
+        LocalDate next = day.plusDays(1);
+        for (int i = 0; i < 370; i++) {
+            if (isTradingDay.test(next)) {
+                return next;
+            }
+            next = next.plusDays(1);
+        }
+        return day.plusDays(1);
     }
 
     /**
@@ -692,6 +745,8 @@ public class SeriesService {
         response.setAction(item.label);
         response.setFrequency(invests ? event.getFrequency() : null);
         response.setAmount(stopped ? null : event.getAmount());
+        // 只有 action=1 的定向调整才有这个标记，前端据此显示「次一交易日起生效」
+        response.setDeferred(invests && Boolean.TRUE.equals(event.getDeferred()));
         response.setNote(event.getNote());
         return response;
     }
@@ -885,6 +940,9 @@ public class SeriesService {
 
         /** 有没有出现过 action=1；用来区分「已结束」和「从未定投」 */
         private boolean everInvested;
+
+        /** 最近一次「结束定投」的日期；用于取消结束之前记录、结束之后才生效的 deferred 调整 */
+        private LocalDate lastStopDate;
 
         /** 当前定投频率；计划结束后保留停投前的值 */
         private String frequency;

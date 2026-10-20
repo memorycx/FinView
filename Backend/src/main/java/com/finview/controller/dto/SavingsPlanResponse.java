@@ -32,8 +32,14 @@ public class SavingsPlanResponse {
     /** 描述 */
     private String description;
 
-    /** 计划类型：asset 总资产目标 / wish 小愿望 */
+    /**
+     * 计划类型 code：内置 asset 总资产 / life 生活保障 / wish 愿望，或用户自定义类型的 code（c+随机串）。
+     * 取值一定在该用户的类型表（/savings/plan-types）里；只有 asset 有额外规则（全账号唯一、必须带目标）。
+     */
     private String type;
+
+    /** 类型显示名（type 对应的 name，用户可改）；前端的分类标签直接用它，不要自己再映射一套 */
+    private String typeName;
 
     /** 详情页头图 URL，没有则前端用占位 */
     private String image;
@@ -73,4 +79,12 @@ public class SavingsPlanResponse {
 
     /** 月度市值走势 */
     private List<SavingsMonthPointResponse> series;
+
+    /**
+     * 未来 12 个完整自然月的定投流入预测（按资产拆分）。
+     * **只有计划详情类响应填充**（GET /savings/plans/{id}、新建、关联/解除）；列表响应为 null。
+     * 口径见 {@link com.finview.service.CashFlowService#planDca}：
+     * 只算周期定投（action=1/2），金额 = actual amount + fee，按实际扣款日归月。
+     */
+    private SavingsInflowForecastResponse inflowForecast;
 }

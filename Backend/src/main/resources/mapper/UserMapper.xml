@@ -4,7 +4,8 @@
 
     <!-- user 是 MySQL 关键字，统一加反引号 -->
     <sql id="baseColumns">
-        id, user_name, password, nickname, email, role, create_time, update_time, update_series_time
+        id, user_name, password, nickname, email, role, create_time, update_time, update_series_time,
+        monthly_inflow
     </sql>
 
     <select id="findByUserName" resultType="User">
@@ -44,6 +45,14 @@
     <update id="touchUpdateSeriesTime">
         UPDATE `user`
         SET update_series_time = #{updateSeriesTime}
+        WHERE id = #{id}
+    </update>
+
+    <!-- 定投分析的「每月固定新增」：只在用户点保存时写，不参与登录 / 序列推进的任何路径；
+         null = 清空（页面显示「未设置」），所以不写 IFNULL 之类的兜底 -->
+    <update id="updateMonthlyInflow">
+        UPDATE `user`
+        SET monthly_inflow = #{monthlyInflow}
         WHERE id = #{id}
     </update>
 

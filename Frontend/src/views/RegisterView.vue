@@ -51,11 +51,9 @@ async function handleRegister() {
     <div class="w-full max-w-sm">
       <!-- Logo & Title -->
       <div class="text-center mb-8">
-        <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/10 text-primary mb-4">
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11h-6"/><path d="M19 8v6"/></svg>
-        </div>
+        <img src="/icon.svg" alt="" class="mx-auto mb-4 size-14 rounded-2xl" />
         <h1 class="text-2xl font-semibold tracking-tight">创建账户</h1>
-        <p class="text-sm text-muted-foreground mt-1">加入 FinView，追踪你的投资</p>
+        <p class="text-sm text-muted-foreground mt-1">加入蓝序，追踪你的投资</p>
       </div>
 
       <!-- Form -->

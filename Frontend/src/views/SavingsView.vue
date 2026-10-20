@@ -24,35 +24,17 @@ import {
   savingsRemaining,
   savingsReturnRate,
 } from '@/lib/finance'
-import type { SavingsPlan, SavingsPlanType } from '@/api/types'
+import type { SavingsPlan } from '@/api/types'
 
 const router = useRouter()
 
 const { data: savingsPlans } = useRequest(() => getSavingsPlans())
 
-/** 计划类型的中文标签，列表徽章与 tab 共用（后端 type 的三取值） */
-const TYPE_LABELS: Record<SavingsPlanType, string> = {
-  asset: '总资产',
-  life: '生活保障',
-  wish: '愿望',
-}
-
-type TabKey = 'all' | SavingsPlanType
-const activeTab = ref<TabKey>('all')
-
-const tabs = computed<{ key: TabKey; label: string; count: number }[]>(() => {
-  const plans = savingsPlans.value ?? []
-  const total = plans.length
-  const asset = plans.filter((p) => p.type === 'asset').length
-  const life = plans.filter((p) => p.type === 'life').length
-  const wish = plans.filter((p) => p.type === 'wish').length
-  return [
-    { key: 'all', label: '全部', count: total },
-    { key: 'asset', label: '总资产', count: asset },
-    { key: 'life', label: TYPE_LABELS.life, count: life },
-    { key: 'wish', label: TYPE_LABELS.wish, count: wish },
-  ]
-})
+/**
+ * 分类键：类型可以自定义（code 是开放的字符串），所以这里只存 code、不做联合类型。
+ * 标签一律用计划自带的 typeName（用户改过类型名就跟着变），别在前端再映射一套写死的表。
+ */
+const activeTab = ref('all')
 
 const filteredPlans = computed(() => {
   const plans = savingsPlans.value ?? []
@@ -210,14 +192,13 @@ function formatTargetMonth(d: string) {
         style="background-image: url('/bg_01.svg')"
         aria-hidden="true"
       />
+      <!-- 右上角标签 -->
+      <span class="absolute right-4 top-4 z-20 inline-flex items-center rounded-full bg-brand/10 px-3 py-1 text-xs font-medium text-brand lg:right-6 lg:top-6">
+        总资产
+      </span>
       <div class="relative z-10 flex flex-col gap-6 lg:flex-row lg:items-stretch">
         <!-- 左侧：信息区 -->
         <div class="flex-1 space-y-4 p-0 lg:p-8 lg:pr-6">
-          <!-- 标签 -->
-          <span class="inline-flex items-center rounded-full bg-brand/10 px-3 py-1 text-xs font-medium text-brand">
-            总资产
-          </span>
-
           <!-- 标题 + 描述 -->
           <div>
             <h1 class="text-3xl font-bold">{{ assetPlan.name }}</h1>
@@ -343,7 +324,7 @@ function formatTargetMonth(d: string) {
 
     <!-- 生活保障 / 愿望区域标题 -->
     <div class="mb-4 space-y-1">
-      <h2 class="text-xl font-bold">资产分类</h2>
+      <h2 class="text-3xl font-bold tracking-tight">资产分类</h2>
       <p class="text-sm text-muted-foreground">一些具体而美好的目标，让生活更有期待。</p>
     </div>
 
@@ -360,11 +341,11 @@ function formatTargetMonth(d: string) {
         <div class="flex items-start gap-4">
           <div class="flex min-w-0 flex-1 flex-col gap-2">
             <div class="flex items-start justify-between gap-2">
-              <h3 class="truncate text-2xl font-bold">{{ p.name }}</h3>
+              <h3 class="truncate text-xl font-bold">{{ p.name }}</h3>
               <span
                 class="inline-flex shrink-0 items-center rounded-full bg-brand/10 px-3 py-1.5 text-sm font-medium text-brand"
               >
-                {{ TYPE_LABELS[p.type] }}
+                {{ p.typeName }}
               </span>
             </div>
             <p class="text-sm text-muted-foreground">{{ p.description }}</p>

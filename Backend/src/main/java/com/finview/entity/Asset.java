@@ -43,10 +43,10 @@ public class Asset {
     private String category;
 
     /**
-     * 资产类型：equity 股基 / bond 债基（基金行）/ cash 现金（保留 code CASH，系统维护）。
+     * 资产类型：equity 股基 / bond 债基 / money 货币基金（基金行）/ cash 现金（保留 code CASH，系统维护）。
      * 用户维护的元数据：录入 / 修改调整记录时随请求带上（AdjustmentRequest.assetType，传了才改），
      * fold 不覆盖；null = 未标注，按**股基**算（读侧兜底，schema.sql 也会把 NULL 回填成 equity）。
-     * 「我的资产」页的安全资金占比 = asset_type ∈ {bond, cash} 的市值 / 总资产，见 AssetService.summary。
+     * 「我的资产」页的安全资金占比 = asset_type ∈ {bond, money, cash} 的市值 / 总资产，见 AssetService.summary。
      */
     private String assetType;
 
@@ -64,8 +64,8 @@ public class Asset {
 
     /**
      * 申购费率（**百分数**，0.12 表示 0.12%），用户维护的元数据，fold 不覆盖。
-     * 买入（周期扣款与一笔收入）时按 金额 × rate / 100 扣手续费，不足 1 分按 1 分扣，
-     * 扣完的净额才计入本金与份额；null 或 0 表示不计费。赎回（一笔支出）不收费率。
+     * 周期扣款与买入（action=3）时按 金额 × rate / 100 扣手续费，不足 1 分按 1 分扣，
+     * 扣完的净额才计入本金与份额；null 或 0 表示不计费。卖出（action=4）不收费率。
      */
     private BigDecimal rate;
 

@@ -4,13 +4,13 @@
 
     <!-- date / action 是 MySQL 关键字，统一加反引号，与 schema.sql 保持一致 -->
     <sql id="baseColumns">
-        adjustment_id, user_id, code, `date`, reason, `action`, frequency, amount, note
+        adjustment_id, user_id, code, `date`, reason, `action`, deferred, frequency, amount, note
     </sql>
 
     <!-- useGeneratedKeys 把自增的 adjustment_id 回填到实体 -->
     <insert id="insert" useGeneratedKeys="true" keyProperty="adjustmentId">
-        INSERT INTO `adjustments` (user_id, code, `date`, reason, `action`, frequency, amount, note)
-        VALUES (#{userId}, #{code}, #{date}, #{reason}, #{action}, #{frequency}, #{amount}, #{note})
+        INSERT INTO `adjustments` (user_id, code, `date`, reason, `action`, deferred, frequency, amount, note)
+        VALUES (#{userId}, #{code}, #{date}, #{reason}, #{action}, #{deferred}, #{frequency}, #{amount}, #{note})
     </insert>
 
     <select id="findByIdAndUser" resultType="Adjustment">
@@ -55,6 +55,7 @@
             `date`    = #{date},
             reason    = #{reason},
             `action`  = #{action},
+            deferred  = #{deferred},
             frequency = #{frequency},
             amount    = #{amount},
             note      = #{note}

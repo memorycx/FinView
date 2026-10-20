@@ -40,22 +40,23 @@ public class AdjustmentService {
     /** 结束定投：与「定投开始」在同一天互斥 */
     private static final int ACTION_STOP_INVEST = 2;
 
-    /** 一笔收入：现金的「进账」也用这个动作（见 CashAsset） */
+    /** 买入：现金的「进账」也用这个动作（见 CashAsset） */
     private static final int ACTION_INCOME = 3;
 
-    /** 一笔支出：现金的「出账」 */
+    /** 卖出：现金的「出账」 */
     private static final int ACTION_EXPENSE = 4;
 
-    /** 合法动作：1定投开始，2结束定投，3一笔收入，4一笔支出（与表注释、前端 AdjustmentAction 一致） */
+    /** 合法动作：1定投开始，2结束定投，3买入，4卖出（与表注释、前端 AdjustmentAction 一致） */
     private static final Set<Integer> VALID_ACTIONS = Set.of(1, 2, 3, 4);
 
     /** 合法频率，与前端 InvestFrequency 一致 */
     private static final Set<String> VALID_FREQUENCIES = Set.of("daily", "weekly", "monthly");
 
     /**
-     * 合法的基金细分类型：equity 股基 / bond 债基（cash 只属于保留 code CASH，不接受前端指定）。
+     * 合法的基金细分类型：equity 股基 / bond 债基 / money 货币基金
+     * （cash 只属于保留 code CASH，不接受前端指定）。
      */
-    private static final Set<String> VALID_ASSET_TYPES = Set.of("equity", "bond");
+    private static final Set<String> VALID_ASSET_TYPES = Set.of("equity", "bond", "money");
 
     private final AdjustmentMapper adjustmentMapper;
     private final AssetMapper assetMapper;
@@ -162,6 +163,9 @@ public class AdjustmentService {
             // 结束定投和收支记录都不该带频率，前端可能残留上次选的值，这里统一归一成 null
             frequency = null;
         }
+        // deferred 只属于「定投开始 / 调整」：true = 记录日只写时间线、频率与金额从下一个交易日起生效。
+        // 其余动作传了也归一成 false，与 frequency 同一套处理。
+        boolean deferred = action == ACTION_START_INVEST && Boolean.TRUE.equals(request.getDeferred());
 
         String code = request.getCode().trim();
         // 现金是保留 code（见 CashAsset）：只接受离散收支，「定投开始 / 结束」在现金上没有意义 ——
@@ -170,7 +174,7 @@ public class AdjustmentService {
         if (CashAsset.isCash(code)) {
             code = CashAsset.CODE;
             if (action != ACTION_INCOME && action != ACTION_EXPENSE) {
-                throw BusinessException.badRequest("现金只支持「一笔收入 / 一笔支出」");
+                throw BusinessException.badRequest("现金只支持「买入 / 卖出」（进账 / 出账）");
             }
         }
         LocalDate date = request.getDate();
@@ -187,6 +191,7 @@ public class AdjustmentService {
         adjustment.setDate(date);
         adjustment.setReason(trimToNull(request.getReason()));
         adjustment.setAction(action);
+        adjustment.setDeferred(deferred);
         adjustment.setFrequency(frequency);
         adjustment.setAmount(request.getAmount());
         adjustment.setNote(trimToNull(request.getNote()));
@@ -220,7 +225,7 @@ public class AdjustmentService {
             return null;
         }
         if (!VALID_ASSET_TYPES.contains(value)) {
-            throw BusinessException.badRequest("资产类型必须是 equity/bond");
+            throw BusinessException.badRequest("资产类型必须是 equity/bond/money");
         }
         return value;
     }

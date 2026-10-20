@@ -20,6 +20,24 @@
         VALUES (#{userId}, #{planId}, #{assetId})
     </insert>
 
+    <!-- 资产 → 所属计划（含计划名）：2026-10-13 起一一对应，所以一个资产至多一行 -->
+    <select id="findLinksByUser" resultType="AssetPlanLink">
+        SELECT pa.asset_id, pa.plan_id, sp.name AS plan_name
+        FROM `plan_asset` pa
+                 JOIN `saving_plans` sp ON sp.id = pa.plan_id
+        WHERE pa.user_id = #{userId}
+    </select>
+
+    <!-- 单个资产所属的计划；没有关联时返回 null（关联前的排他校验用） -->
+    <select id="findLinkByAsset" resultType="AssetPlanLink">
+        SELECT pa.asset_id, pa.plan_id, sp.name AS plan_name
+        FROM `plan_asset` pa
+                 JOIN `saving_plans` sp ON sp.id = pa.plan_id
+        WHERE pa.user_id = #{userId}
+          AND pa.asset_id = #{assetId}
+        LIMIT 1
+    </select>
+
     <delete id="delete">
         DELETE
         FROM `plan_asset`

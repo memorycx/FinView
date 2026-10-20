@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { ArrowLeft, Loader2, Pencil, Plus, RefreshCw, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Loader2, Pencil, Plus, RefreshCw, SlidersHorizontal, Trash2 } from '@lucide/vue'
 import Card from '@/components/ui/card/Card.vue'
 import CardHeader from '@/components/ui/card/CardHeader.vue'
 import CardContent from '@/components/ui/card/CardContent.vue'
@@ -8,8 +8,11 @@ import Badge from '@/components/ui/Badge.vue'
 import Button from '@/components/ui/Button.vue'
 import Separator from '@/components/ui/Separator.vue'
 import AdjustmentForm from '@/components/AdjustmentForm.vue'
+import FundEditDialog from '@/components/FundEditDialog.vue'
+import PlanAdjustDialog from '@/components/PlanAdjustDialog.vue'
 import { deleteAdjustment, generateFundSeries, getAdjustment } from '@/api'
 import {
+  adjustmentActionLabel,
   formatCNY,
   formatPct,
   frequencyLabel,
@@ -26,6 +29,11 @@ const emit = defineEmits<{
   /** 序列重新生成完毕，父级要重新拉一次计划列表与组合走势 */
   generated: []
 }>()
+
+/** 「编辑基金信息」弹窗是否打开（名称 / 类型 / 费率 / 标的市场） */
+const editing = ref(false)
+/** 「调整定投」弹窗是否打开（新频率 / 金额，从下一交易日起生效） */
+const adjusting = ref(false)
 
 /** 生成序列：后端整段重算 asset_series（净值异步补，不阻塞），期间锁住按钮防连点 */
 const generating = ref(false)
@@ -46,6 +54,18 @@ async function handleGenerate() {
   } finally {
     generating.value = false
   }
+}
+
+/** 基础信息保存成功：关弹窗，父级重拉（费率 / 市场改了的话后端已重算序列） */
+function handleEdited() {
+  editing.value = false
+  emit('generated')
+}
+
+/** 定投计划调整成功：关弹窗，父级重拉（后端已按新计划重算序列） */
+function handleAdjusted() {
+  adjusting.value = false
+  emit('generated')
 }
 
 /* ==================== 调整记录的编辑 / 新增 / 删除 ==================== */
@@ -150,16 +170,46 @@ async function doDelete(adj: PlanAdjustment) {
           <h2 class="text-pretty text-xl font-bold">{{ fund.name }}</h2>
         </div>
         <div class="flex shrink-0 flex-col items-end gap-1">
-          <Button
-            variant="outline"
-            size="sm"
-            :disabled="generating"
-            :title="`按调整记录重算 ${fund.code} 的每日序列（asset_series）`"
-            @click="handleGenerate"
-          >
-            <RefreshCw class="size-3.5" :class="generating && 'animate-spin'" />
-            {{ generating ? '生成中…' : '生成序列' }}
-          </Button>
+          <!--
+            三个操作按钮并排：调整定投 / 编辑基础信息 / 生成序列。
+            面板窄（约 260px）时允许整行换行，别把标题压成多行；生成中只锁生成按钮，
+            另外两个不受影响（保存时会走自己的 loading）。
+          -->
+          <div class="flex flex-wrap justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="!fund.active"
+              :title="
+                fund.active
+                  ? '调整定投频率与金额，从下一个交易日起生效'
+                  : '当前没有进行中的定投，请先添加一条「定投开始」记录'
+              "
+              @click="adjusting = true"
+            >
+              <SlidersHorizontal class="size-3.5" />
+              调整定投
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              :title="`编辑「${fund.name}」的名称、类型、费率与标的市场`"
+              @click="editing = true"
+            >
+              <Pencil class="size-3.5" />
+              编辑
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="generating"
+              :title="`按调整记录重算 ${fund.code} 的每日序列（asset_series）`"
+              @click="handleGenerate"
+            >
+              <RefreshCw class="size-3.5" :class="generating && 'animate-spin'" />
+              {{ generating ? '生成中…' : '生成序列' }}
+            </Button>
+          </div>
           <p v-if="generateMessage" class="text-xs text-muted-foreground">
             {{ generateMessage }}
           </p>
@@ -227,11 +277,11 @@ async function doDelete(adj: PlanAdjustment) {
             >
               <div class="p-3.5 pb-1">
                 <div class="flex items-center justify-between gap-3">
-                  <span class="text-sm font-medium">{{ adj.action }}</span>
+                  <span class="text-sm font-medium">{{ adjustmentActionLabel(adj.action) }}</span>
                   <span class="font-mono text-xs text-muted-foreground">{{ adj.date }}</span>
                 </div>
                 <p class="mt-1.5 text-sm text-muted-foreground">{{ adj.reason }}</p>
-                <div class="mt-2.5 flex items-center gap-2 text-xs">
+                <div class="mt-2.5 flex flex-wrap items-center gap-2 text-xs">
                   <span class="text-muted-foreground">调整后：</span>
                   <Badge v-if="adj.amount === null" variant="secondary">
                     停止定投
@@ -241,6 +291,14 @@ async function doDelete(adj: PlanAdjustment) {
                     <template v-if="adj.frequency">{{ frequencyLabel(adj.frequency) }} </template>
                     {{ formatCNY(adj.amount) }}
                   </span>
+                  <!-- 「调整定投」创建的记录：当天仍按旧计划，下一交易日起才用新值 -->
+                  <Badge
+                    v-if="adj.deferred"
+                    variant="secondary"
+                    class="font-normal text-muted-foreground"
+                  >
+                    次一交易日起生效
+                  </Badge>
                 </div>
               </div>
 
@@ -319,5 +377,21 @@ async function doDelete(adj: PlanAdjustment) {
         </div>
       </div>
     </CardContent>
+
+    <!-- 基础信息编辑弹窗（Teleport 到 body，挂在哪里都不影响布局） -->
+    <FundEditDialog
+      v-if="editing"
+      :fund="fund"
+      @saved="handleEdited"
+      @close="editing = false"
+    />
+
+    <!-- 调整定投弹窗：新频率 / 金额从下一交易日起生效 -->
+    <PlanAdjustDialog
+      v-if="adjusting"
+      :fund="fund"
+      @saved="handleAdjusted"
+      @close="adjusting = false"
+    />
   </Card>
 </template>

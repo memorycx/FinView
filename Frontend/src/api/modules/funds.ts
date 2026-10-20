@@ -1,9 +1,17 @@
 import { request } from '../http'
-import type { Fund, FundStatus } from '../types'
+import type { Fund, FundStatus, FundUpdatePayload } from '../types'
 
 /** 获取定投计划列表 */
 export function getFunds(params?: { status?: FundStatus }) {
   return request<Fund[]>({ url: '/funds', params })
+}
+
+/**
+ * 编辑基金基础信息（名称 / 类型 / 申购费率 / 标的市场），返回更新后的计划详情。
+ * 编码不开放修改；费率或标的市场变化时后端会整段重算该基金的每日序列。
+ */
+export function updateFund(id: string, payload: FundUpdatePayload) {
+  return request<Fund>({ url: `/funds/${id}`, method: 'PUT', body: payload })
 }
 
 /** 获取单个定投计划详情（含走势与调整记录） */

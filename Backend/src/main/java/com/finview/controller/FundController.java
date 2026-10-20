@@ -2,12 +2,16 @@ package com.finview.controller;
 
 import com.finview.common.Result;
 import com.finview.controller.dto.FundResponse;
+import com.finview.controller.dto.FundUpdateRequest;
 import com.finview.service.FundService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,12 +23,14 @@ import java.util.List;
  *
  * GET /funds?status=active|archived|all   列表，缺省 all；active = 未归档（持有中），archived = 已归档
  * GET /funds/{id}                          详情，id 就是资产编码
+ * PUT /funds/{id}                          编辑基金基础信息（名称 / 类型 / 费率 / 标的市场）
  * GET /funds/leaderboard                   收益排行榜，按收益率降序（含已归档）
  * POST /funds/{id}/series                  重新生成该计划的每日序列（资产总览/走势图的数据源）
  * POST /funds/series                       一键更新全部计划的每日序列（组合总览页的按钮）
  *
- * 计划本身不落表，是 FundService 把 adjustments 事件流 fold 出来的，所以除最后一个外都是读接口；
- * 增删改都走 AdjustmentController，写完之后由 AdjustmentService 刷新 asset 表快照。
+ * 计划本身的金额与状态不落表，是 FundService 把 adjustments 事件流 fold 出来的；
+ * 调整记录的增删改走 AdjustmentController，写完之后由 AdjustmentService 刷新 asset 表快照。
+ * PUT /funds/{id} 只改 asset 行上的用户元数据，改到费率 / 标的市场时会顺带整段重算序列。
  *
  * 全部需要认证（SecurityConfig 里 anyRequest().authenticated()），
  * 计划归属由后端从 token 解析，前端不传 userId。
@@ -52,6 +58,18 @@ public class FundController {
     public Result<FundResponse> detail(Authentication authentication,
                                       @PathVariable String id) {
         return Result.success(fundService.getById(currentUserId(authentication), id));
+    }
+
+    /**
+     * 编辑基金基础信息（定投详情页的「编辑」按钮），返回更新后的计划详情。
+     * 只接受名称 / 类型 / 申购费率 / 标的市场；编码是关联键，不接受修改。
+     * 费率或标的市场变化会让后端整段重算 asset_series（手续费与 QDII 扣款日都受影响）。
+     */
+    @PutMapping("/{id}")
+    public Result<FundResponse> update(Authentication authentication,
+                                       @PathVariable String id,
+                                       @Valid @RequestBody FundUpdateRequest request) {
+        return Result.success(fundService.updateMetadata(currentUserId(authentication), id, request));
     }
 
     /** 收益排行榜，含已归档计划，前端不做排序 */

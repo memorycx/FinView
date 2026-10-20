@@ -4,6 +4,7 @@ import com.finview.common.BusinessException;
 import com.finview.common.Xirr;
 import com.finview.controller.dto.DayPointResponse;
 import com.finview.controller.dto.FundResponse;
+import com.finview.controller.dto.FundUpdateRequest;
 import com.finview.entity.Asset;
 import com.finview.entity.AssetSeries;
 import com.finview.mapper.AssetMapper;
@@ -12,6 +13,7 @@ import com.finview.service.SeriesService.PlanState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
@@ -50,6 +52,15 @@ public class FundService {
 
     /** asset 表缺行时的兜底分类 */
     private static final String DEFAULT_CATEGORY = "fund";
+
+    /** 可编辑的基金细分类型，与 asset.asset_type 的取值一致（cash 只属于 CASH，不在此列） */
+    private static final Set<String> VALID_ASSET_TYPES = Set.of("equity", "bond", "money");
+
+    /** 可标注的标的市场，与 MarketCalendar 支持的取值一致 */
+    private static final Set<String> VALID_MARKETS = Set.of("us", "hk");
+
+    /** 费率上限（百分数），只用于防手滑；实际申购费率远低于此 */
+    private static final BigDecimal MAX_RATE = BigDecimal.valueOf(100);
 
     private final AssetMapper assetMapper;
     private final AssetSeriesMapper assetSeriesMapper;
@@ -134,6 +145,58 @@ public class FundService {
         return states.size();
     }
 
+    /**
+     * 编辑基金基础信息（定投详情页的「编辑」按钮）：名称 / 类型 / 申购费率 / 标的市场。
+     *
+     * 只改 asset 表里用户维护的元数据，编码与 fold 快照都动不了。
+     * **费率或标的市场变化会整段重算 asset_series**：rate 决定历史买入的申购手续费，
+     * market 决定 QDII 的扣款日，不重算的话走势图与计划金额还停在旧口径；
+     * 只改名称 / 类型时不触发重算（它们不影响任何数字）。
+     *
+     * 返回更新后的计划详情，前端可以直接写回、不用再 GET 一次。
+     * asset 行缺失（正常路径上由登录推进 / 序列重建保证存在）时先补建一行再写元数据。
+     */
+    @Transactional
+    public FundResponse updateMetadata(Long userId, String id, FundUpdateRequest request) {
+        String code = StringUtils.hasText(id) ? id.trim() : "";
+        // 归属校验与 getById 同一套：fold 结果里没有这个 code 就是不存在（现金也不在 fold 里）
+        if (!seriesService.foldForUser(userId, LocalDate.now()).containsKey(code)) {
+            throw BusinessException.notFound("定投计划不存在");
+        }
+
+        String name = request.getName() == null ? "" : request.getName().trim();
+        if (name.isEmpty()) {
+            throw BusinessException.badRequest("基金名称不能为空");
+        }
+        String assetType = normalizeAssetType(request.getAssetType());
+        BigDecimal rate = normalizeRate(request.getRate());
+        String market = normalizeMarket(request.getMarket());
+
+        Asset existing = assetMapper.findByUser(userId).stream()
+                .filter(asset -> code.equals(asset.getCode()))
+                .findFirst()
+                .orElse(null);
+        // 费率与市场参与序列生成；名称 / 类型不影响数字，不必重算
+        boolean affectsSeries = existing == null
+                || !sameRate(existing.getRate(), rate)
+                || !Objects.equals(trimToLower(existing.getMarket()), market);
+
+        if (existing == null) {
+            // 极端情况下 asset 行缺失：先重建一次把行补出来（快照 upsert 会插入默认元数据）
+            seriesService.rebuildAndSyncNav(userId, code);
+        }
+        int updated = assetMapper.updateMetadata(userId, code, name, assetType, rate, market);
+        if (updated == 0) {
+            throw BusinessException.notFound("定投计划不存在");
+        }
+        if (affectsSeries) {
+            seriesService.rebuildAndSyncNav(userId, code);
+        }
+        log.info("更新基金基础信息，userId={}, code={}, assetType={}, rate={}, market={}, 是否重算={}",
+                userId, code, assetType, rate, market, affectsSeries);
+        return getById(userId, code);
+    }
+
     /** fold 结果 + asset 元数据 + 序列 → 前端契约的 Fund */
     private FundResponse toResponse(PlanState state, Asset asset, List<AssetSeries> rows) {
         List<AssetSeries> series = rows == null ? List.of() : rows;
@@ -151,6 +214,9 @@ public class FundService {
         response.setArchived(isArchived(asset));
         response.setFrequency(state.getFrequency());
         response.setAmount(state.getAmount());
+        // 编辑表单的回填值：费率与标的市场都是 asset 行的用户元数据，缺行时为 null
+        response.setRate(asset == null ? null : asset.getRate());
+        response.setMarket(asset == null ? null : asset.getMarket());
         response.setStartDate(state.startMonth());
         // 最后更新时间来自 asset 行（SeriesService 每次生成/重算时刷新）；asset 行缺失时为 null
         response.setLastUpdateTime(asset == null ? null : asset.getLastUpdateTime());
@@ -226,6 +292,54 @@ public class FundService {
     /** asset 行缺失时视为未归档 */
     private static boolean isArchived(Asset asset) {
         return asset != null && Boolean.TRUE.equals(asset.getArchived());
+    }
+
+    /** 基金类型归一 + 校验：大小写不敏感，取值必须是 equity / bond / money */
+    static String normalizeAssetType(String value) {
+        String assetType = trimToLower(value);
+        if (assetType == null || !VALID_ASSET_TYPES.contains(assetType)) {
+            throw BusinessException.badRequest("基金类型必须是 equity/bond/money");
+        }
+        return assetType;
+    }
+
+    /** 标的市场归一 + 校验：空 = A 股（null），否则必须是 us / hk */
+    static String normalizeMarket(String value) {
+        String market = trimToLower(value);
+        if (market == null) {
+            return null;
+        }
+        if (!VALID_MARKETS.contains(market)) {
+            throw BusinessException.badRequest("标的市场必须是 us/hk");
+        }
+        return market;
+    }
+
+    /** 费率归一 + 校验：null = 不计费；保留 4 位小数，与 asset.rate 的 DECIMAL(18,4) 一致 */
+    static BigDecimal normalizeRate(BigDecimal rate) {
+        if (rate == null) {
+            return null;
+        }
+        if (rate.signum() < 0) {
+            throw BusinessException.badRequest("申购费率不能为负数");
+        }
+        if (rate.compareTo(MAX_RATE) > 0) {
+            throw BusinessException.badRequest("申购费率不能超过 100%");
+        }
+        return rate.setScale(4, RoundingMode.HALF_UP);
+    }
+
+    /** 比较费率只看数值（0.12 与 0.1200 相等），不因小数位不同误触发重算 */
+    static boolean sameRate(BigDecimal a, BigDecimal b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        return a.compareTo(b) == 0;
+    }
+
+    /** 去空白并转小写，空串归一成 null（读库里的历史标签与请求参数共用） */
+    private static String trimToLower(String value) {
+        return StringUtils.hasText(value) ? value.trim().toLowerCase() : null;
     }
 
     /** 状态参数只认 active / archived / all，其余值直接 400，别把拼错的参数当默认值静默放过 */

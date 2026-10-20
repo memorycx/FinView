@@ -45,6 +45,22 @@
           AND code = #{code}
     </update>
 
+    <!--
+      一次性改基金基础信息（定投详情页「编辑」按钮）：只动用户维护的元数据，
+      快照列（active / frequency / startDate / principal / total / last_update_time）
+      与 category / industry / region / currency / archived 都不碰。
+      rate / market 会参与序列生成，调用方改完要整段重算 asset_series。
+    -->
+    <update id="updateMetadata">
+        UPDATE `asset`
+        SET name       = #{name},
+            asset_type = #{assetType},
+            rate       = #{rate},
+            market     = #{market}
+        WHERE user_id = #{userId}
+          AND code = #{code}
+    </update>
+
     <insert id="upsertSnapshot">
         INSERT INTO `asset` (user_id, name, code, category, asset_type, active, frequency, `startDate`, principal, total, last_update_time)
         VALUES (#{userId}, #{name}, #{code}, #{category}, #{assetType}, #{active}, #{frequency},

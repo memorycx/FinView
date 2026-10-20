@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.finview.mapper.SavingPlanTypeMapper">
+
+    <sql id="baseColumns">
+        id, user_id, code, name, sort_order, create_time, update_time
+    </sql>
+
+    <!-- 内置三类型的幂等补种：唯一键 (user_id, code) + INSERT IGNORE，重复执行无副作用 -->
+    <insert id="ensureBuiltins">
+        INSERT IGNORE INTO `saving_plan_types` (user_id, code, name, sort_order)
+        VALUES (#{userId}, 'asset', '总资产', 0),
+               (#{userId}, 'life', '生活保障', 1),
+               (#{userId}, 'wish', '愿望', 2)
+    </insert>
+
+    <select id="findByUser" resultType="SavingPlanType">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM `saving_plan_types`
+        WHERE user_id = #{userId}
+        ORDER BY sort_order, id
+    </select>
+
+    <select id="findByIdAndUser" resultType="SavingPlanType">
+        SELECT
+        <include refid="baseColumns"/>
+        FROM `saving_plan_types`
+        WHERE id = #{id}
+          AND user_id = #{userId}
+    </select>
+
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO `saving_plan_types` (user_id, code, name, sort_order)
+        VALUES (#{userId}, #{code}, #{name}, #{sortOrder})
+    </insert>
+
+    <!-- 改名只动 name：计划表存的是 code，改名不用碰任何计划 -->
+    <update id="updateName">
+        UPDATE `saving_plan_types`
+        SET name = #{name}
+        WHERE id = #{id}
+          AND user_id = #{userId}
+    </update>
+
+    <delete id="deleteByIdAndUser">
+        DELETE FROM `saving_plan_types`
+        WHERE id = #{id}
+          AND user_id = #{userId}
+    </delete>
+
+    <select id="countByUserAndName" resultType="int">
+        SELECT COUNT(*) FROM `saving_plan_types`
+        WHERE user_id = #{userId}
+          AND name = #{name}
+        <if test="excludeId != null">
+            AND id != #{excludeId}
+        </if>
+    </select>
+
+</mapper>

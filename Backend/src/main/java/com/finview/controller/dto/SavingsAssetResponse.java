@@ -30,8 +30,29 @@ public class SavingsAssetResponse {
     private BigDecimal amount;
 
     /**
+     * 这只资产自己的收益四件套（口径与计划整体那份完全一致，就是逐只的那一份：
+     * 收益 = current − principal − fee，收益率 = 收益 / invested）。
+     * **现金为 null** —— 它没有 asset_series、本金恒等于市值，谈不上收益（与整体口径排除现金一致），
+     * 前端对 null 显示「—」。
+     */
+    private SavingsReturnResponse returnStats;
+
+    /**
      * 图表主题色变量，如 --chart-1。
      * 前端直接写 `var(${colorVar})`，为 null 会渲染成透明，所以由服务端按顺序轮转补一个。
      */
     private String colorVar;
+
+    /**
+     * 当前是否正在执行定投（最近一条 action=1/2 记录是「定投开始」且日期不晚于今天）。
+     * **只有计划详情类响应填充**（GET /savings/plans/{id}、新建、关联/解除）；列表响应为 null，
+     * 避免列表为每个计划各 fold 一次。前端把 null 当「未计算」处理。
+     */
+    private Boolean dcaActive;
+
+    /** 当前定投频率（daily / weekly / monthly）；未在定投时为 null */
+    private String dcaFrequency;
+
+    /** 当前每期定投金额（元）；未在定投时为 null */
+    private BigDecimal dcaAmount;
 }

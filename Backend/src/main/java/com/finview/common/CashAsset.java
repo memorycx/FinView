@@ -4,7 +4,7 @@ package com.finview.common;
  * 现金资产的约定：保留 code、名称、分类的唯一出处（2026-10-01 加）。
  *
  * 现金不是一个新表，而是一条**保留 code 的普通资产**：
- * - 手工记录复用 adjustments（正数 = action=3 一笔收入、负数 = action=4 一笔支出），
+ * - 手工记录复用 adjustments（正数 = action=3 进账、负数 = action=4 出账），
  *   方向由 action 表达，所以全库「amount 恒为正」的约定不用破；
  * - 余额由 {@link com.finview.service.CashLedger} 现算（手工记录 + 基金买卖联动），
  *   只写 asset 表的一条快照，**不写 asset_series**；
@@ -23,7 +23,7 @@ public final class CashAsset {
     public static final String CATEGORY = "cash";
 
     /**
-     * asset.asset_type：现金是系统语义（安全资金统计按 bond + cash 计），
+     * asset.asset_type：现金是系统语义（安全资金统计按 bond + money + cash 计），
      * 每次刷新余额快照都会照写；基金的类型是用户维护的元数据，fold 不碰。
      */
     public static final String ASSET_TYPE = "cash";
