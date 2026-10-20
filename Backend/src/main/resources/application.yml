@@ -11,7 +11,7 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://localhost:3306/finview?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
     username: root
-    password: cx050416
+    password: xxxxx
   sql:
     init:
       # 每次启动都执行 schema.sql（幂等建表 + 迁移）与 data.sql（幂等种子）。
